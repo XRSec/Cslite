@@ -1,2 +1,35 @@
 Cslite_开发文档_v3.3.1.md
 .DS_Store
+Thumbs.db
+.env
+
+# Log files
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Build directories
+dist/
+build/
+
+# Node.js dependencies
+node_modules/
+web/node_modules/
+web/.next/
+web/out/
+
+# Coverage
+coverage/
+*.lcov
+
+# Database files
+*.db
+*.sqlite
+
+# Docker volumes
+mysql_data/
+server_files/
