@@ -1,6 +1,12 @@
 document.addEventListener('DOMContentLoaded', () => {
+    console.log('=== DOM Content Loaded ===');
+    console.log('Router available:', !!window.router);
+    console.log('API available:', !!window.api);
     updateAuthUI();
+    console.log('Auth UI updated');
+    console.log('Calling router.handleRoute()');
     window.router.handleRoute();
+    console.log('Initial route handling initiated');
 });
 
 function updateAuthUI() {
