@@ -24,6 +24,12 @@ const server = http.createServer((req, res) => {
     
     const parsedUrl = url.parse(req.url);
     let pathname = parsedUrl.pathname;
+
+    // 静默处理浏览器自动请求的 /favicon.ico
+    if (pathname === '/favicon.ico') {
+        res.writeHead(204, { 'Cache-Control': 'no-cache' });
+        return res.end();
+    }
     
     // 处理SPA路由，根路径和无扩展名的路径返回index.html
     if (pathname === '/' || (!pathname.startsWith('/') && !path.extname(pathname))) {

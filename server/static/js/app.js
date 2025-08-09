@@ -33,7 +33,7 @@ function showToast(message, type = 'info') {
     const toast = document.createElement('div');
     toast.className = `alert alert-${type}`;
     toast.style.cssText = 'position: fixed; top: 20px; right: 20px; z-index: 9999; min-width: 250px;';
-    toast.textContent = message;
+    toast.textContent = typeof message === 'string' ? message : (message && message.message) || String(message);
     
     document.body.appendChild(toast);
     
@@ -59,6 +59,42 @@ function debounce(func, wait) {
         timeout = setTimeout(later, wait);
     };
 }
+
+// Noise filtering for browser extensions/userscripts errors
+(function setupGlobalErrorFilters() {
+    const noisePatterns = [
+        'back/forward cache',
+        'bootstrap-autofill-overlay.js',
+        'AutofillInlineMenuContentService',
+        'chrome-extension://',
+        'moz-extension://',
+        'userscript.html?name='
+    ];
+
+    function isIgnorable(message, filename, stack) {
+        const text = [message || '', filename || '', stack || ''].join(' \n ');
+        return noisePatterns.some((p) => text.includes(p));
+    }
+
+    window.addEventListener('error', (event) => {
+        try {
+            if (isIgnorable(event.message, event.filename, event.error && event.error.stack)) {
+                event.preventDefault();
+            }
+        } catch (_) {}
+    });
+
+    window.addEventListener('unhandledrejection', (event) => {
+        try {
+            const reason = event.reason || {};
+            const message = typeof reason === 'string' ? reason : reason.message;
+            const stack = reason && reason.stack;
+            if (isIgnorable(message, '', stack)) {
+                event.preventDefault();
+            }
+        } catch (_) {}
+    });
+})();
 
 window.showToast = showToast;
 window.formatDate = formatDate;
