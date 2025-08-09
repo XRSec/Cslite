@@ -33,3 +33,13 @@ coverage/
 # Docker volumes
 mysql_data/
 server_files/
+
+# Go build outputs
+server/cslite-server
+agent/cslite-agent
+agent/cslite-agent-*
+
+# Executables
+*.exe
+*.out
+*.bin

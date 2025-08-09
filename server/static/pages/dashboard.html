@@ -30,18 +30,26 @@ async function loadDashboardStats() {
             window.api.getCommands({ limit: 1 })
         ]);
         
+        const devicesTotal = (devices?.data?.total ?? (Array.isArray(devices?.data?.devices) ? devices.data.devices.length : 0)) || 0;
+        const groupsTotal = (
+            Array.isArray(groups?.data)
+                ? groups.data.length
+                : (groups?.data?.total ?? (Array.isArray(groups?.data?.groups) ? groups.data.groups.length : 0))
+        ) || 0;
+        const commandsTotal = (commands?.data?.total ?? (Array.isArray(commands?.data?.commands) ? commands.data.commands.length : 0)) || 0;
+        
         statsEl.innerHTML = `
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
                 <div style="text-align: center; padding: 2rem; background: #f3f4f6; border-radius: 8px;">
-                    <div style="font-size: 2rem; font-weight: bold; color: #2563eb;">${devices.total || 0}</div>
+                    <div style="font-size: 2rem; font-weight: bold; color: #2563eb;">${devicesTotal}</div>
                     <div style="color: #6b7280; margin-top: 0.5rem;">设备总数</div>
                 </div>
                 <div style="text-align: center; padding: 2rem; background: #f3f4f6; border-radius: 8px;">
-                    <div style="font-size: 2rem; font-weight: bold; color: #10b981;">${groups.total || 0}</div>
+                    <div style="font-size: 2rem; font-weight: bold; color: #10b981;">${groupsTotal}</div>
                     <div style="color: #6b7280; margin-top: 0.5rem;">组总数</div>
                 </div>
                 <div style="text-align: center; padding: 2rem; background: #f3f4f6; border-radius: 8px;">
-                    <div style="font-size: 2rem; font-weight: bold; color: #8b5cf6;">${commands.total || 0}</div>
+                    <div style="font-size: 2rem; font-weight: bold; color: #8b5cf6;">${commandsTotal}</div>
                     <div style="color: #6b7280; margin-top: 0.5rem;">命令总数</div>
                 </div>
             </div>
@@ -55,9 +63,10 @@ async function loadRecentActivities() {
     const activitiesEl = document.getElementById('recent-activities');
     
     try {
-        const commands = await window.api.getCommands({ limit: 5 });
+        const res = await window.api.getCommands({ limit: 5 });
+        const items = Array.isArray(res?.data?.commands) ? res.data.commands : [];
         
-        if (commands.data && commands.data.length > 0) {
+        if (items.length > 0) {
             activitiesEl.innerHTML = `
                 <table class="table">
                     <thead>
@@ -69,7 +78,7 @@ async function loadRecentActivities() {
                         </tr>
                     </thead>
                     <tbody>
-                        ${commands.data.map(cmd => `
+                        ${items.map(cmd => `
                             <tr>
                                 <td><a href="#/commands/${cmd.id}">${cmd.id}</a></td>
                                 <td>${cmd.type}</td>

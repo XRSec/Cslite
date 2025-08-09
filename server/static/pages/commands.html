@@ -18,7 +18,7 @@ async function loadCommands() {
     
     try {
         const response = await window.api.getCommands();
-        const commands = response.data || [];
+        const commands = (response && response.data && Array.isArray(response.data.commands)) ? response.data.commands : [];
         
         if (commands.length > 0) {
             listEl.innerHTML = `
@@ -27,7 +27,7 @@ async function loadCommands() {
                         <tr>
                             <th>命令ID</th>
                             <th>类型</th>
-                            <th>目标</th>
+                            <th>名称</th>
                             <th>状态</th>
                             <th>创建时间</th>
                             <th>操作</th>
@@ -38,7 +38,7 @@ async function loadCommands() {
                             <tr>
                                 <td>${cmd.id}</td>
                                 <td>${cmd.type}</td>
-                                <td>${cmd.target_type}: ${cmd.target_id}</td>
+                                <td>${cmd.name || '-'}</td>
                                 <td>${cmd.status}</td>
                                 <td>${window.formatDate(cmd.created_at)}</td>
                                 <td>
@@ -129,13 +129,13 @@ async function updateTargetOptions(targetType) {
     try {
         if (targetType === 'device') {
             const devices = await window.api.getDevices();
-            const deviceList = devices.data || [];
+            const deviceList = (devices && devices.data && Array.isArray(devices.data.devices)) ? devices.data.devices : [];
             selectEl.innerHTML = deviceList.map(device => 
                 `<option value="${device.id}">${device.name || device.id}</option>`
             ).join('');
         } else if (targetType === 'group') {
             const groups = await window.api.getGroups();
-            const groupList = groups.data || [];
+            const groupList = Array.isArray(groups && groups.data) ? groups.data : [];
             selectEl.innerHTML = groupList.map(group => 
                 `<option value="${group.id}">${group.name}</option>`
             ).join('');

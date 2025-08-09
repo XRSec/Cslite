@@ -20,7 +20,7 @@ async function loadDevices() {
     
     try {
         const response = await window.api.getDevices();
-        currentDevices = response.data || [];
+        currentDevices = (response && response.data && Array.isArray(response.data.devices)) ? response.data.devices : [];
         
         if (currentDevices.length > 0) {
             listEl.innerHTML = `
@@ -42,9 +42,9 @@ async function loadDevices() {
                                 <td><input type="checkbox" class="device-select" data-id="${device.id}"></td>
                                 <td>${device.id}</td>
                                 <td>${device.name || '-'}</td>
-                                <td>${device.ip || '-'}</td>
+                                <td>${device.ip_address || '-'}</td>
                                 <td>${device.status || 'offline'}</td>
-                                <td>${device.last_active ? window.formatDate(device.last_active) : '-'}</td>
+                                <td>${device.last_seen ? window.formatDate(device.last_seen) : '-'}</td>
                                 <td>
                                     <a href="#/devices/${device.id}" class="btn btn-secondary" style="font-size: 0.75rem; padding: 0.25rem 0.5rem;">查看</a>
                                 </td>

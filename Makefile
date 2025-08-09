@@ -44,7 +44,7 @@ run-server-dev:
 
 run-server-node:
 	@echo "Running server..."
-	cd server && go run main.go
+	cd server && node dev-server.js
 
 run-agent: build-agent
 	@echo "Running agent..."
