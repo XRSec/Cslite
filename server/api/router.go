@@ -7,16 +7,10 @@ import (
 
 	"github.com/XRSec/Cslite/middleware"
 	"github.com/gin-gonic/gin"
-	"github.com/XRSec/Cslite/config"
 )
 
 // SetupRoutes 设置所有API路由
 func SetupRoutes(router *gin.Engine) {
-	// 启动数据库初始化（后台执行）
-	config.StartDatabaseInitialization()
-
-	// 全局中间件：数据库就绪检查
-	router.Use(middleware.DBReadyOrServiceUnavailable())
 	// 健康检查端点
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{

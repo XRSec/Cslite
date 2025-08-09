@@ -21,7 +21,10 @@ func main() {
 	// 设置日志记录器
 	setupLogger()
 
-	// 数据库初始化改为后台在路由设置时启动
+	// 初始化数据库连接
+	if err := config.InitDatabase(); err != nil {
+		logrus.Fatal("Failed to initialize database:", err)
+	}
 
 	// 在生产模式下设置Gin为发布模式
 	if config.AppConfig.Mode == "production" {

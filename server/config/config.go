@@ -4,9 +4,6 @@ package config
 import (
 	"os"
 	"strconv"
-	"sync"
-	"sync/atomic"
-	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/sirupsen/logrus"
@@ -29,44 +26,6 @@ type Config struct {
 
 // AppConfig 是全局配置实例
 var AppConfig *Config
-
-// readiness flags for database initialization
-var (
-	dbReady atomic.Bool
-	initOnce sync.Once
-)
-
-// IsDatabaseReady returns whether the database has been initialized and is ready for use
-func IsDatabaseReady() bool {
-	return dbReady.Load()
-}
-
-// StartDatabaseInitialization kicks off database initialization in the background with retry
-func StartDatabaseInitialization() {
-	initOnce.Do(func() {
-		go func() {
-			backoff := 5
-			for {
-				if err := InitDatabase(); err != nil {
-					logrus.WithError(err).Error("Database init failed, will retry")
-					// exponential-ish backoff up to 60s
-					if backoff < 60 {
-						backoff *= 2
-						if backoff > 60 { backoff = 60 }
-					}
-					// sleep before retry
-					for i := 0; i < backoff; i++ {
-						time.Sleep(1 * time.Second)
-					}
-					continue
-				}
-				dbReady.Store(true)
-				logrus.Info("Database initialized and ready")
-				break
-			}
-		}()
-	})
-}
 
 // LoadConfig 加载应用程序配置
 func LoadConfig() error {
