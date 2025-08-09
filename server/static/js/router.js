@@ -118,8 +118,6 @@ class Router {
             const initFunctionName = `init${this.toPascalCase(pageName)}Page`;
             if (window[`init${this.toPascalCase(pageName)}Page`]) {
                 window[`init${this.toPascalCase(pageName)}Page`](params);
-            } else {
-                console.warn('Init function not found:', initFunctionName);
             }
         } catch (error) {
             console.error('Failed to load page:', error);

@@ -35,7 +35,6 @@ class API {
 
             return responseData;
         } catch (error) {
-            console.error('API request failed:', error);
             
             // 如果后端不可用，提供mock响应用于前端测试
             if (error.message.includes('Failed to fetch') || error.message.includes('net::ERR_CONNECTION_REFUSED')) {
