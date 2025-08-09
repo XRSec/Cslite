@@ -24,7 +24,7 @@ function initLoginPage() {
         const password = document.getElementById('password').value;
         
         try {
-            await window.api.login(username, password);
+            const data = await window.api.login(username, password);
             window.showToast('登录成功', 'success');
             window.updateAuthUI();
             window.router.navigate('/');

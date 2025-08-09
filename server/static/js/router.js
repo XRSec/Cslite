@@ -94,6 +94,21 @@ class Router {
             }
 
             transitionEl.innerHTML = content;
+            
+            // 执行插入页面中的脚本标签，确保 initXXXPage 可用
+            const scripts = Array.from(transitionEl.querySelectorAll('script'));
+            for (const oldScript of scripts) {
+                const newScript = document.createElement('script');
+                if (oldScript.src) {
+                    newScript.src = oldScript.src;
+                    newScript.async = false;
+                } else {
+                    newScript.textContent = oldScript.textContent;
+                }
+                document.body.appendChild(newScript);
+                oldScript.remove();
+            }
+
             transitionEl.classList.remove('fade-out');
             transitionEl.classList.add('fade-in');
             
@@ -138,7 +153,8 @@ class Router {
     }
 
     isAuthenticated() {
-        return !!localStorage.getItem(window.CONFIG.TOKEN_KEY);
+        // 基于 Cookie 的会话：以前端持有的用户信息作为是否已登录的判据
+        return !!localStorage.getItem(window.CONFIG.USER_KEY);
     }
 
     sleep(ms) {

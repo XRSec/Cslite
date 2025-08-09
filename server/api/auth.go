@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/XRSec/Cslite/config"
 	"github.com/XRSec/Cslite/internal/auth"
 	"github.com/XRSec/Cslite/middleware"
 	//"github.com/XRSec/Cslite/models"
@@ -72,15 +73,16 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	// 设置会话Cookie
+	// 设置会话Cookie（开发环境允许非HTTPS）
+	secure := config.AppConfig.Mode == "production"
 	c.SetCookie(
 		"session",
 		token,
 		7*24*60*60, // 7天过期
 		"/",
 		"",
-		true, // 仅HTTPS
-		true, // HttpOnly
+		secure, // 生产HTTPS，开发HTTP
+		true,   // HttpOnly
 	)
 
 	// 返回登录成功响应
