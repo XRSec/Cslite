@@ -38,6 +38,14 @@ run-server: build-server
 	@echo "Running server..."
 	cd server && ./cslite-server
 
+run-server-dev:
+	@echo "Running server..."
+	cd server && go run main.go
+
+run-server-node:
+	@echo "Running server..."
+	cd server && go run main.go
+
 run-agent: build-agent
 	@echo "Running agent..."
 	cd agent && ./cslite-agent
