@@ -65,6 +65,8 @@ func InitDatabase() error {
 // autoMigrate 自动迁移数据库表结构
 func autoMigrate() error {
 	logrus.Info("Running database migrations...")
+
+	// 自动创建或更新所有模型对应的数据库表
 	return DB.AutoMigrate(
 		&models.User{},            // 用户表
 		&models.Session{},         // 会话表
