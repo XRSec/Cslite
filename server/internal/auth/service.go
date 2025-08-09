@@ -1,27 +1,32 @@
+// auth 包提供了用户认证相关的服务
 package auth
 
 import (
 	"errors"
 	"time"
 
-	"github.com/cslite/cslite/server/config"
-	"github.com/cslite/cslite/server/models"
-	"github.com/cslite/cslite/server/utils"
+	"github.com/XRSec/Cslite/config"
+	"github.com/XRSec/Cslite/models"
+	"github.com/XRSec/Cslite/utils"
 	"gorm.io/gorm"
 )
 
+// Service 认证服务结构体
 type Service struct {
-	db *gorm.DB
+	db *gorm.DB // 数据库连接
 }
 
+// NewService 创建新的认证服务实例
 func NewService() *Service {
 	return &Service{
 		db: config.DB,
 	}
 }
 
+// Login 用户登录
 func (s *Service) Login(username, password string) (*models.User, string, error) {
 	var user models.User
+	// 根据用户名查找用户
 	if err := s.db.Where("username = ?", username).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, "", ErrInvalidCredentials
@@ -29,18 +34,21 @@ func (s *Service) Login(username, password string) (*models.User, string, error)
 		return nil, "", err
 	}
 
+	// 验证密码
 	if !utils.CheckPasswordHash(password, user.Password) {
 		return nil, "", ErrInvalidCredentials
 	}
 
+	// 生成会话令牌
 	token := utils.GenerateSessionToken()
 	session := &models.Session{
 		ID:        utils.GenerateSessionToken(),
 		UserID:    user.ID,
 		Token:     token,
-		ExpiresAt: time.Now().Add(7 * 24 * time.Hour),
+		ExpiresAt: time.Now().Add(7 * 24 * time.Hour), // 7天后过期
 	}
 
+	// 创建会话记录
 	if err := s.db.Create(session).Error; err != nil {
 		return nil, "", err
 	}
@@ -48,21 +56,27 @@ func (s *Service) Login(username, password string) (*models.User, string, error)
 	return &user, token, nil
 }
 
+// Logout 用户登出
 func (s *Service) Logout(token string) error {
+	// 删除会话记录
 	return s.db.Where("token = ?", token).Delete(&models.Session{}).Error
 }
 
+// CreateUser 创建新用户
 func (s *Service) CreateUser(username, password, email string, role int) (*models.User, error) {
 	var existingUser models.User
+	// 检查用户名是否已存在
 	if err := s.db.Where("username = ?", username).First(&existingUser).Error; err == nil {
 		return nil, ErrUserExists
 	}
 
+	// 对密码进行哈希加密
 	hashedPassword, err := utils.HashPassword(password)
 	if err != nil {
 		return nil, err
 	}
 
+	// 创建新用户
 	user := &models.User{
 		Username: username,
 		Password: hashedPassword,
@@ -77,9 +91,11 @@ func (s *Service) CreateUser(username, password, email string, role int) (*model
 	return user, nil
 }
 
+// GenerateAPIKey 为用户生成API密钥
 func (s *Service) GenerateAPIKey(userID uint) (string, error) {
 	apiKey := utils.GenerateAPIKey()
-	
+
+	// 创建API密钥记录
 	key := &models.APIKey{
 		ID:       utils.GenerateSessionToken(),
 		UserID:   userID,
@@ -95,12 +111,15 @@ func (s *Service) GenerateAPIKey(userID uint) (string, error) {
 	return apiKey, nil
 }
 
+// ValidateSession 验证会话令牌
 func (s *Service) ValidateSession(token string) (*models.User, error) {
 	var session models.Session
+	// 查找未过期的会话
 	if err := s.db.Where("token = ? AND expires_at > ?", token, time.Now()).First(&session).Error; err != nil {
 		return nil, ErrInvalidSession
 	}
 
+	// 获取用户信息
 	var user models.User
 	if err := s.db.First(&user, session.UserID).Error; err != nil {
 		return nil, err
@@ -109,32 +128,39 @@ func (s *Service) ValidateSession(token string) (*models.User, error) {
 	return &user, nil
 }
 
+// ValidateAPIKey 验证API密钥
 func (s *Service) ValidateAPIKey(key string) (*models.User, error) {
 	var apiKey models.APIKey
+	// 查找API密钥
 	if err := s.db.Where("key = ?", key).First(&apiKey).Error; err != nil {
 		return nil, ErrInvalidAPIKey
 	}
 
+	// 获取用户信息
 	var user models.User
 	if err := s.db.First(&user, apiKey.UserID).Error; err != nil {
 		return nil, err
 	}
 
+	// 更新最后使用时间
 	s.db.Model(&apiKey).Update("last_used", time.Now())
 
 	return &user, nil
 }
 
+// ListUsers 分页列出用户
 func (s *Service) ListUsers(page, limit int) ([]*models.User, int64, error) {
 	var users []*models.User
 	var total int64
 
 	offset := (page - 1) * limit
 
+	// 获取总用户数
 	if err := s.db.Model(&models.User{}).Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
+	// 分页查询用户列表
 	if err := s.db.Offset(offset).Limit(limit).Find(&users).Error; err != nil {
 		return nil, 0, err
 	}
@@ -142,10 +168,12 @@ func (s *Service) ListUsers(page, limit int) ([]*models.User, int64, error) {
 	return users, total, nil
 }
 
+// DeleteUser 删除用户
 func (s *Service) DeleteUser(userID uint) error {
 	return s.db.Delete(&models.User{}, userID).Error
 }
 
+// GetUserByID 根据ID获取用户
 func (s *Service) GetUserByID(userID uint) (*models.User, error) {
 	var user models.User
 	if err := s.db.First(&user, userID).Error; err != nil {

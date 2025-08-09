@@ -4,11 +4,9 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/cslite/cslite/server/config"
-	"github.com/cslite/cslite/server/models"
-	"github.com/cslite/cslite/server/utils"
-	"github.com/robfig/cron/v3"
-	"github.com/sirupsen/logrus"
+	"github.com/XRSec/Cslite/config"
+	"github.com/XRSec/Cslite/models"
+	"github.com/XRSec/Cslite/utils"
 	"gorm.io/gorm"
 )
 
@@ -23,15 +21,15 @@ func NewService() *Service {
 }
 
 type CreateCommandInput struct {
-	Name        string                 `json:"name"`
-	Type        string                 `json:"type"`
-	Schedule    string                 `json:"schedule"`
-	Content     string                 `json:"content"`
-	TargetType  string                 `json:"target_type"`
-	TargetIDs   []string               `json:"target_ids"`
-	Timeout     int                    `json:"timeout"`
-	RetryPolicy *models.RetryPolicy    `json:"retry_policy"`
-	EnvVars     map[string]string      `json:"env_vars"`
+	Name        string              `json:"name"`
+	Type        string              `json:"type"`
+	Schedule    string              `json:"schedule"`
+	Content     string              `json:"content"`
+	TargetType  string              `json:"target_type"`
+	TargetIDs   []string            `json:"target_ids"`
+	Timeout     int                 `json:"timeout"`
+	RetryPolicy *models.RetryPolicy `json:"retry_policy"`
+	EnvVars     map[string]string   `json:"env_vars"`
 }
 
 func (s *Service) CreateCommand(userID uint, input *CreateCommandInput) (*models.Command, error) {
@@ -52,14 +50,6 @@ func (s *Service) CreateCommand(userID uint, input *CreateCommandInput) (*models
 		EnvVars:     envVarsJSON,
 		Status:      models.CommandStatusPending,
 		CreatedBy:   userID,
-	}
-
-	if command.Type == models.CommandTypeCron && command.Schedule != "" {
-		nextRun, err := calculateNextRun(command.Schedule)
-		if err != nil {
-			return nil, err
-		}
-		command.NextRun = &nextRun
 	}
 
 	if command.Type == models.CommandTypeImmediate {
@@ -117,13 +107,13 @@ func (s *Service) ListCommands(userID uint, isAdmin bool, page, limit int, filte
 
 func (s *Service) GetCommand(commandID string, userID uint, isAdmin bool) (*models.Command, error) {
 	var command models.Command
-	
+
 	query := s.db.Preload("Creator").Preload("Executions")
-	
+
 	if !isAdmin {
 		query = query.Where("created_by = ?", userID)
 	}
-	
+
 	if err := query.First(&command, "id = ?", commandID).Error; err != nil {
 		return nil, err
 	}
@@ -133,12 +123,12 @@ func (s *Service) GetCommand(commandID string, userID uint, isAdmin bool) (*mode
 
 func (s *Service) UpdateCommandStatus(commandID string, action string, userID uint, isAdmin bool) error {
 	var command models.Command
-	
+
 	query := s.db
 	if !isAdmin {
 		query = query.Where("created_by = ?", userID)
 	}
-	
+
 	if err := query.First(&command, "id = ?", commandID).Error; err != nil {
 		return err
 	}
@@ -168,12 +158,12 @@ func (s *Service) UpdateCommandStatus(commandID string, action string, userID ui
 
 func (s *Service) GetCommandResults(commandID string, userID uint, isAdmin bool) ([]*ExecutionDetail, error) {
 	var command models.Command
-	
+
 	query := s.db
 	if !isAdmin {
 		query = query.Where("created_by = ?", userID)
 	}
-	
+
 	if err := query.First(&command, "id = ?", commandID).Error; err != nil {
 		return nil, err
 	}
@@ -217,18 +207,19 @@ func (s *Service) executeCommand(command *models.Command) {
 	}
 
 	s.db.Create(execution)
-	
+
 	s.db.Model(command).Update("status", models.CommandStatusRunning)
 }
 
-func calculateNextRun(schedule string) (time.Time, error) {
-	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
-	sched, err := parser.Parse(schedule)
-	if err != nil {
-		return time.Time{}, err
-	}
-	return sched.Next(time.Now()), nil
-}
+// calculateNextRun 计算下次执行时间（供客户端参考，服务端不负责调度）
+// func calculateNextRun(schedule string) (time.Time, error) {
+// 	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+// 	sched, err := parser.Parse(schedule)
+// 	if err != nil {
+// 		return time.Time{}, err
+// 	}
+// 	return sched.Next(time.Now()), nil
+// }
 
 type ExecutionDetail struct {
 	ID            string          `json:"id"`

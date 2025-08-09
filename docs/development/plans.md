@@ -64,13 +64,12 @@
 - [x] 命令列表查询 (`GET /commands`)
 - [x] 命令详情查询 (`GET /commands/{id}`)
 - [x] 命令状态更新 (`PUT /commands/{id}`)
-- [x] 命令类型支持（once/cron/immediate）
+- [x] 命令类型支持（once/immediate）
 - [x] 目标设备/群组管理
 - [x] 超时设置
 - [x] 重试策略
 - [x] 命令执行结果汇总
 - [x] 执行历史记录
-- [x] 定时任务调度器
 
 #### 6. 日志系统 (100%)
 - [x] 命令执行日志 (`GET /logs/command`)

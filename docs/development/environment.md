@@ -40,7 +40,6 @@
 
 | 环境变量名            | 默认值 | 说明                           |
 | --------------------- | ------ | ------------------------------ |
-| `CSLITE_CRON_ENABLED` | `true` | 是否启用计划任务调度           |
 | `CSLITE_ALLOW_REGISTER` | `true` | 是否允许 Agent 注册            |
 | `CSLITE_DEBUG_MODE`  | `false`| 是否启用调试模式               |
 

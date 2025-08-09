@@ -1,0 +1,176 @@
+<div class="card">
+    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+        <span>组管理</span>
+        <button class="btn btn-primary" onclick="showAddGroupModal()">创建组</button>
+    </div>
+    <div id="groups-list" class="loading">
+        <div class="spinner"></div>
+    </div>
+</div>
+
+<script>
+async function initGroupsPage() {
+    await loadGroups();
+}
+
+async function loadGroups() {
+    const listEl = document.getElementById('groups-list');
+    
+    try {
+        const response = await window.api.getGroups();
+        const groups = response.data || [];
+        
+        if (groups.length > 0) {
+            listEl.innerHTML = `
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>组ID</th>
+                            <th>名称</th>
+                            <th>描述</th>
+                            <th>设备数量</th>
+                            <th>创建时间</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${groups.map(group => `
+                            <tr>
+                                <td>${group.id}</td>
+                                <td>${group.name}</td>
+                                <td>${group.description || '-'}</td>
+                                <td>${group.device_count || 0}</td>
+                                <td>${window.formatDate(group.created_at)}</td>
+                                <td>
+                                    <button class="btn btn-secondary" style="font-size: 0.75rem; padding: 0.25rem 0.5rem;" onclick="showAddDevicesToGroupModal('${group.id}')">添加设备</button>
+                                    <button class="btn btn-danger" style="font-size: 0.75rem; padding: 0.25rem 0.5rem;" onclick="deleteGroup('${group.id}')">删除</button>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        } else {
+            listEl.innerHTML = '<div class="empty-state">暂无组</div>';
+        }
+    } catch (error) {
+        listEl.innerHTML = '<div class="empty-state">加载组列表失败</div>';
+    }
+}
+
+function showAddGroupModal() {
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+    modal.innerHTML = `
+        <div class="modal-content">
+            <div class="modal-header">创建组</div>
+            <form id="add-group-form">
+                <div class="form-group">
+                    <label class="form-label">组名称</label>
+                    <input type="text" name="name" class="form-control" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">描述</label>
+                    <textarea name="description" class="form-control" rows="3"></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="this.closest('.modal').remove()">取消</button>
+                    <button type="submit" class="btn btn-primary">创建</button>
+                </div>
+            </form>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    modal.querySelector('#add-group-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const formData = new FormData(e.target);
+        const data = Object.fromEntries(formData);
+        
+        try {
+            await window.api.createGroup(data);
+            window.showToast('组创建成功', 'success');
+            modal.remove();
+            await loadGroups();
+        } catch (error) {
+            window.showToast(error.message || '创建失败', 'error');
+        }
+    });
+}
+
+async function showAddDevicesToGroupModal(groupId) {
+    try {
+        const devices = await window.api.getDevices();
+        const deviceList = devices.data || [];
+        
+        if (deviceList.length === 0) {
+            window.showToast('暂无可用设备', 'error');
+            return;
+        }
+        
+        const modal = document.createElement('div');
+        modal.className = 'modal';
+        modal.innerHTML = `
+            <div class="modal-content">
+                <div class="modal-header">添加设备到组</div>
+                <form id="add-devices-form">
+                    <div class="form-group">
+                        <label class="form-label">选择设备</label>
+                        <div style="max-height: 300px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 4px; padding: 0.5rem;">
+                            ${deviceList.map(device => `
+                                <label style="display: block; padding: 0.5rem;">
+                                    <input type="checkbox" name="device_ids" value="${device.id}">
+                                    ${device.name || device.id} (${device.ip || '-'})
+                                </label>
+                            `).join('')}
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" onclick="this.closest('.modal').remove()">取消</button>
+                        <button type="submit" class="btn btn-primary">添加</button>
+                    </div>
+                </form>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+        
+        modal.querySelector('#add-devices-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const deviceIds = formData.getAll('device_ids');
+            
+            if (deviceIds.length === 0) {
+                window.showToast('请选择至少一个设备', 'error');
+                return;
+            }
+            
+            try {
+                await window.api.addDevicesToGroup(groupId, deviceIds);
+                window.showToast('设备添加成功', 'success');
+                modal.remove();
+                await loadGroups();
+            } catch (error) {
+                window.showToast(error.message || '添加失败', 'error');
+            }
+        });
+    } catch (error) {
+        window.showToast('加载设备列表失败', 'error');
+    }
+}
+
+async function deleteGroup(groupId) {
+    if (!confirm('确定要删除这个组吗？')) {
+        return;
+    }
+    
+    try {
+        await window.api.deleteGroup(groupId);
+        window.showToast('删除成功', 'success');
+        await loadGroups();
+    } catch (error) {
+        window.showToast(error.message || '删除失败', 'error');
+    }
+}
+</script>

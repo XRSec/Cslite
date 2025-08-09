@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cslite - 远程控制平台</title>
+    <!-- 引入样式文件 -->
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <!-- 主应用容器 -->
+    <div id="app">
+        <!-- 导航栏 -->
+        <nav class="navbar">
+            <div class="nav-brand">Cslite</div>
+            <div class="nav-menu">
+                <a href="#/" class="nav-link" data-route="dashboard">仪表板</a>
+                <a href="#/devices" class="nav-link" data-route="devices">设备管理</a>
+                <a href="#/groups" class="nav-link" data-route="groups">组管理</a>
+                <a href="#/commands" class="nav-link" data-route="commands">命令管理</a>
+                <a href="#/logs" class="nav-link" data-route="logs">日志</a>
+                <a href="#/login" class="nav-link" data-route="login" id="auth-link">登录</a>
+            </div>
+        </nav>
+        <!-- 主内容区域 -->
+        <main id="content" class="main-content">
+            <div class="page-transition"></div>
+        </main>
+    </div>
+    <!-- 引入JavaScript文件 -->
+    <script src="/static/js/config.js"></script>  <!-- 配置文件 -->
+    <script src="/static/js/api.js"></script>     <!-- API接口 -->
+    <script src="/static/js/router.js"></script>  <!-- 路由管理 -->
+    <script src="/static/js/app.js"></script>     <!-- 主应用逻辑 -->
+</body>
+</html>

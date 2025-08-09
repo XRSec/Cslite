@@ -1,0 +1,137 @@
+<div class="card">
+    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+        <span>设备管理</span>
+        <button class="btn btn-primary" onclick="showAddDeviceModal()">添加设备</button>
+    </div>
+    <div id="devices-list" class="loading">
+        <div class="spinner"></div>
+    </div>
+</div>
+
+<script>
+let currentDevices = [];
+
+async function initDevicesPage() {
+    await loadDevices();
+}
+
+async function loadDevices() {
+    const listEl = document.getElementById('devices-list');
+    
+    try {
+        const response = await window.api.getDevices();
+        currentDevices = response.data || [];
+        
+        if (currentDevices.length > 0) {
+            listEl.innerHTML = `
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th><input type="checkbox" id="select-all"></th>
+                            <th>设备ID</th>
+                            <th>名称</th>
+                            <th>IP地址</th>
+                            <th>状态</th>
+                            <th>最后活跃</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${currentDevices.map(device => `
+                            <tr>
+                                <td><input type="checkbox" class="device-select" data-id="${device.id}"></td>
+                                <td>${device.id}</td>
+                                <td>${device.name || '-'}</td>
+                                <td>${device.ip || '-'}</td>
+                                <td>${device.status || 'offline'}</td>
+                                <td>${device.last_active ? window.formatDate(device.last_active) : '-'}</td>
+                                <td>
+                                    <a href="#/devices/${device.id}" class="btn btn-secondary" style="font-size: 0.75rem; padding: 0.25rem 0.5rem;">查看</a>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+                <div style="margin-top: 1rem;">
+                    <button class="btn btn-danger" onclick="deleteSelectedDevices()">删除选中</button>
+                </div>
+            `;
+            
+            document.getElementById('select-all').addEventListener('change', (e) => {
+                document.querySelectorAll('.device-select').forEach(cb => cb.checked = e.target.checked);
+            });
+        } else {
+            listEl.innerHTML = '<div class="empty-state">暂无设备</div>';
+        }
+    } catch (error) {
+        listEl.innerHTML = '<div class="empty-state">加载设备列表失败</div>';
+    }
+}
+
+function showAddDeviceModal() {
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+    modal.innerHTML = `
+        <div class="modal-content">
+            <div class="modal-header">添加设备</div>
+            <form id="add-device-form">
+                <div class="form-group">
+                    <label class="form-label">设备名称</label>
+                    <input type="text" name="name" class="form-control" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">设备类型</label>
+                    <input type="text" name="type" class="form-control" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">描述</label>
+                    <textarea name="description" class="form-control" rows="3"></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="this.closest('.modal').remove()">取消</button>
+                    <button type="submit" class="btn btn-primary">添加</button>
+                </div>
+            </form>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    modal.querySelector('#add-device-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const formData = new FormData(e.target);
+        const data = Object.fromEntries(formData);
+        
+        try {
+            await window.api.createDevice(data);
+            window.showToast('设备添加成功', 'success');
+            modal.remove();
+            await loadDevices();
+        } catch (error) {
+            window.showToast(error.message || '添加失败', 'error');
+        }
+    });
+}
+
+async function deleteSelectedDevices() {
+    const selected = Array.from(document.querySelectorAll('.device-select:checked'))
+        .map(cb => cb.dataset.id);
+    
+    if (selected.length === 0) {
+        window.showToast('请选择要删除的设备', 'error');
+        return;
+    }
+    
+    if (!confirm(`确定要删除 ${selected.length} 个设备吗？`)) {
+        return;
+    }
+    
+    try {
+        await window.api.deleteDevices(selected);
+        window.showToast('删除成功', 'success');
+        await loadDevices();
+    } catch (error) {
+        window.showToast(error.message || '删除失败', 'error');
+    }
+}
+</script>

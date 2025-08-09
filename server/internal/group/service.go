@@ -1,9 +1,9 @@
 package group
 
 import (
-	"github.com/cslite/cslite/server/config"
-	"github.com/cslite/cslite/server/models"
-	"github.com/cslite/cslite/server/utils"
+	"github.com/XRSec/Cslite/config"
+	"github.com/XRSec/Cslite/models"
+	"github.com/XRSec/Cslite/utils"
 	"gorm.io/gorm"
 )
 
@@ -34,13 +34,13 @@ func (s *Service) CreateGroup(userID uint, name, description string) (*models.Gr
 
 func (s *Service) ListGroups(userID uint, isAdmin bool) ([]*models.Group, error) {
 	var groups []*models.Group
-	
+
 	query := s.db.Model(&models.Group{})
-	
+
 	if !isAdmin {
 		query = query.Where("created_by = ?", userID)
 	}
-	
+
 	if err := query.Find(&groups).Error; err != nil {
 		return nil, err
 	}
@@ -57,17 +57,17 @@ func (s *Service) ListGroups(userID uint, isAdmin bool) ([]*models.Group, error)
 func (s *Service) AddDevicesToGroup(groupID string, deviceIDs []string, userID uint, isAdmin bool) (int64, error) {
 	var group models.Group
 	query := s.db
-	
+
 	if !isAdmin {
 		query = query.Where("created_by = ?", userID)
 	}
-	
+
 	if err := query.First(&group, "id = ?", groupID).Error; err != nil {
 		return 0, err
 	}
 
 	deviceQuery := s.db.Model(&models.Device{}).Where("id IN ?", deviceIDs)
-	
+
 	if !isAdmin {
 		deviceQuery = deviceQuery.Where("owner_id = ?", userID)
 	}
@@ -78,21 +78,21 @@ func (s *Service) AddDevicesToGroup(groupID string, deviceIDs []string, userID u
 
 func (s *Service) DeleteGroup(groupID string, userID uint, isAdmin bool) (int64, error) {
 	var group models.Group
-	
+
 	query := s.db
 	if !isAdmin {
 		query = query.Where("created_by = ?", userID)
 	}
-	
+
 	if err := query.First(&group, "id = ?", groupID).Error; err != nil {
 		return 0, err
 	}
 
 	var reassignedCount int64
 	s.db.Model(&models.Device{}).Where("group_id = ?", groupID).Count(&reassignedCount)
-	
+
 	s.db.Model(&models.Device{}).Where("group_id = ?", groupID).Update("group_id", nil)
-	
+
 	if err := s.db.Delete(&group).Error; err != nil {
 		return 0, err
 	}

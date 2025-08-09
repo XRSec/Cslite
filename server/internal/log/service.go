@@ -6,8 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cslite/cslite/server/config"
-	"github.com/cslite/cslite/server/models"
+	"github.com/XRSec/Cslite/config"
+	"github.com/XRSec/Cslite/models"
 	"gorm.io/gorm"
 )
 
@@ -147,7 +147,7 @@ func (s *Service) GetUserLogs(userID uint, action string, page, limit int) ([]*U
 
 func (s *Service) DownloadLog(logID string) (io.ReadCloser, error) {
 	logPath := filepath.Join(config.AppConfig.FileDir, "logs", logID)
-	
+
 	file, err := os.Open(logPath)
 	if err != nil {
 		if os.IsNotExist(err) {

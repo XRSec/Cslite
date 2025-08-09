@@ -1,0 +1,80 @@
+<div class="card">
+    <div class="card-header">日志查询</div>
+    <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+        <select id="log-type" class="form-control" style="width: 200px;">
+            <option value="command">命令日志</option>
+            <option value="device">设备日志</option>
+            <option value="user">用户日志</option>
+        </select>
+        <input type="date" id="start-date" class="form-control" style="width: 200px;">
+        <input type="date" id="end-date" class="form-control" style="width: 200px;">
+        <button class="btn btn-primary" onclick="searchLogs()">搜索</button>
+    </div>
+    <div id="logs-list" class="loading">
+        <div class="spinner"></div>
+    </div>
+</div>
+
+<script>
+async function initLogsPage() {
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - 7);
+    
+    document.getElementById('start-date').value = startDate.toISOString().split('T')[0];
+    document.getElementById('end-date').value = endDate.toISOString().split('T')[0];
+    
+    await searchLogs();
+}
+
+async function searchLogs() {
+    const listEl = document.getElementById('logs-list');
+    const logType = document.getElementById('log-type').value;
+    const startDate = document.getElementById('start-date').value;
+    const endDate = document.getElementById('end-date').value;
+    
+    listEl.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+    
+    try {
+        const params = {};
+        if (startDate) params.start_time = startDate + 'T00:00:00Z';
+        if (endDate) params.end_time = endDate + 'T23:59:59Z';
+        
+        const response = await window.api.getLogs(logType, params);
+        const logs = response.data || [];
+        
+        if (logs.length > 0) {
+            listEl.innerHTML = `
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>时间</th>
+                            <th>级别</th>
+                            <th>来源</th>
+                            <th>消息</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${logs.map(log => `
+                            <tr>
+                                <td>${window.formatDate(log.timestamp)}</td>
+                                <td>${log.level || 'INFO'}</td>
+                                <td>${log.source || '-'}</td>
+                                <td>${log.message || '-'}</td>
+                                <td>
+                                    ${log.downloadable ? `<a href="/api/logs/download/${log.id}" class="btn btn-secondary" style="font-size: 0.75rem; padding: 0.25rem 0.5rem;">下载</a>` : '-'}
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        } else {
+            listEl.innerHTML = '<div class="empty-state">暂无日志</div>';
+        }
+    } catch (error) {
+        listEl.innerHTML = '<div class="empty-state">加载日志失败</div>';
+    }
+}
+</script>

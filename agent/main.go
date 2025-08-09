@@ -7,7 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/cslite/cslite/agent/internal"
+	"github.com/XRSec/Cslite/agent/internal"
 	"github.com/joho/godotenv"
 	"github.com/sirupsen/logrus"
 )
@@ -64,7 +64,7 @@ func setupLogger(level string) {
 	if err != nil {
 		logLevel = logrus.InfoLevel
 	}
-	
+
 	logrus.SetLevel(logLevel)
 	logrus.SetFormatter(&logrus.TextFormatter{
 		FullTimestamp: true,

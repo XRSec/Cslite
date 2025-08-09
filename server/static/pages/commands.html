@@ -1,0 +1,149 @@
+<div class="card">
+    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+        <span>命令管理</span>
+        <button class="btn btn-primary" onclick="showCreateCommandModal()">创建命令</button>
+    </div>
+    <div id="commands-list" class="loading">
+        <div class="spinner"></div>
+    </div>
+</div>
+
+<script>
+async function initCommandsPage() {
+    await loadCommands();
+}
+
+async function loadCommands() {
+    const listEl = document.getElementById('commands-list');
+    
+    try {
+        const response = await window.api.getCommands();
+        const commands = response.data || [];
+        
+        if (commands.length > 0) {
+            listEl.innerHTML = `
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>命令ID</th>
+                            <th>类型</th>
+                            <th>目标</th>
+                            <th>状态</th>
+                            <th>创建时间</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${commands.map(cmd => `
+                            <tr>
+                                <td>${cmd.id}</td>
+                                <td>${cmd.type}</td>
+                                <td>${cmd.target_type}: ${cmd.target_id}</td>
+                                <td>${cmd.status}</td>
+                                <td>${window.formatDate(cmd.created_at)}</td>
+                                <td>
+                                    <a href="#/commands/${cmd.id}" class="btn btn-secondary" style="font-size: 0.75rem; padding: 0.25rem 0.5rem;">查看详情</a>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        } else {
+            listEl.innerHTML = '<div class="empty-state">暂无命令</div>';
+        }
+    } catch (error) {
+        listEl.innerHTML = '<div class="empty-state">加载命令列表失败</div>';
+    }
+}
+
+function showCreateCommandModal() {
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+    modal.innerHTML = `
+        <div class="modal-content">
+            <div class="modal-header">创建命令</div>
+            <form id="create-command-form">
+                <div class="form-group">
+                    <label class="form-label">命令类型</label>
+                    <select name="type" class="form-control" required>
+                        <option value="shell">Shell 命令</option>
+                        <option value="download">下载文件</option>
+                        <option value="upload">上传文件</option>
+                        <option value="script">执行脚本</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">目标类型</label>
+                    <select name="target_type" class="form-control" required onchange="updateTargetOptions(this.value)">
+                        <option value="device">设备</option>
+                        <option value="group">组</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">目标ID</label>
+                    <select name="target_id" id="target-select" class="form-control" required>
+                        <option value="">请先选择目标类型</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">命令内容</label>
+                    <textarea name="content" class="form-control" rows="3" required placeholder='{"command": "ls -la"}'></textarea>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">优先级</label>
+                    <input type="number" name="priority" class="form-control" value="5" min="1" max="10">
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="this.closest('.modal').remove()">取消</button>
+                    <button type="submit" class="btn btn-primary">创建</button>
+                </div>
+            </form>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    modal.querySelector('#create-command-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const formData = new FormData(e.target);
+        const data = Object.fromEntries(formData);
+        
+        try {
+            data.content = JSON.parse(data.content);
+            data.priority = parseInt(data.priority);
+            await window.api.createCommand(data);
+            window.showToast('命令创建成功', 'success');
+            modal.remove();
+            await loadCommands();
+        } catch (error) {
+            window.showToast(error.message || '创建失败', 'error');
+        }
+    });
+}
+
+async function updateTargetOptions(targetType) {
+    const selectEl = document.getElementById('target-select');
+    selectEl.innerHTML = '<option value="">加载中...</option>';
+    
+    try {
+        if (targetType === 'device') {
+            const devices = await window.api.getDevices();
+            const deviceList = devices.data || [];
+            selectEl.innerHTML = deviceList.map(device => 
+                `<option value="${device.id}">${device.name || device.id}</option>`
+            ).join('');
+        } else if (targetType === 'group') {
+            const groups = await window.api.getGroups();
+            const groupList = groups.data || [];
+            selectEl.innerHTML = groupList.map(group => 
+                `<option value="${group.id}">${group.name}</option>`
+            ).join('');
+        }
+    } catch (error) {
+        selectEl.innerHTML = '<option value="">加载失败</option>';
+    }
+}
+
+window.updateTargetOptions = updateTargetOptions;
+</script>

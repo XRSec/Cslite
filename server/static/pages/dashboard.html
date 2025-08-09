@@ -1,0 +1,90 @@
+<div class="card">
+    <div class="card-header">系统概览</div>
+    <div id="dashboard-stats" class="loading">
+        <div class="spinner"></div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">最近活动</div>
+    <div id="recent-activities" class="loading">
+        <div class="spinner"></div>
+    </div>
+</div>
+
+<script>
+async function initDashboardPage() {
+    await Promise.all([
+        loadDashboardStats(),
+        loadRecentActivities()
+    ]);
+}
+
+async function loadDashboardStats() {
+    const statsEl = document.getElementById('dashboard-stats');
+    
+    try {
+        const [devices, groups, commands] = await Promise.all([
+            window.api.getDevices({ limit: 1 }),
+            window.api.getGroups({ limit: 1 }),
+            window.api.getCommands({ limit: 1 })
+        ]);
+        
+        statsEl.innerHTML = `
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+                <div style="text-align: center; padding: 2rem; background: #f3f4f6; border-radius: 8px;">
+                    <div style="font-size: 2rem; font-weight: bold; color: #2563eb;">${devices.total || 0}</div>
+                    <div style="color: #6b7280; margin-top: 0.5rem;">设备总数</div>
+                </div>
+                <div style="text-align: center; padding: 2rem; background: #f3f4f6; border-radius: 8px;">
+                    <div style="font-size: 2rem; font-weight: bold; color: #10b981;">${groups.total || 0}</div>
+                    <div style="color: #6b7280; margin-top: 0.5rem;">组总数</div>
+                </div>
+                <div style="text-align: center; padding: 2rem; background: #f3f4f6; border-radius: 8px;">
+                    <div style="font-size: 2rem; font-weight: bold; color: #8b5cf6;">${commands.total || 0}</div>
+                    <div style="color: #6b7280; margin-top: 0.5rem;">命令总数</div>
+                </div>
+            </div>
+        `;
+    } catch (error) {
+        statsEl.innerHTML = '<div class="empty-state">加载统计数据失败</div>';
+    }
+}
+
+async function loadRecentActivities() {
+    const activitiesEl = document.getElementById('recent-activities');
+    
+    try {
+        const commands = await window.api.getCommands({ limit: 5 });
+        
+        if (commands.data && commands.data.length > 0) {
+            activitiesEl.innerHTML = `
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>命令ID</th>
+                            <th>类型</th>
+                            <th>状态</th>
+                            <th>创建时间</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${commands.data.map(cmd => `
+                            <tr>
+                                <td><a href="#/commands/${cmd.id}">${cmd.id}</a></td>
+                                <td>${cmd.type}</td>
+                                <td>${cmd.status}</td>
+                                <td>${window.formatDate(cmd.created_at)}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        } else {
+            activitiesEl.innerHTML = '<div class="empty-state">暂无最近活动</div>';
+        }
+    } catch (error) {
+        activitiesEl.innerHTML = '<div class="empty-state">加载活动数据失败</div>';
+    }
+}
+</script>

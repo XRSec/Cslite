@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/cslite/cslite/server/config"
-	"github.com/cslite/cslite/server/internal/agent"
+	"github.com/XRSec/Cslite/config"
+	"github.com/XRSec/Cslite/internal/agent"
 	"github.com/gin-gonic/gin"
 )
 
@@ -27,9 +27,9 @@ type RegisterRequest struct {
 }
 
 type HeartbeatRequest struct {
-	AgentID   string                       `json:"agent_id" binding:"required"`
-	Metrics   *agent.HeartbeatMetrics      `json:"metrics"`
-	Timestamp string                       `json:"timestamp"`
+	AgentID   string                  `json:"agent_id" binding:"required"`
+	Metrics   *agent.HeartbeatMetrics `json:"metrics"`
+	Timestamp string                  `json:"timestamp"`
 }
 
 type ReportResultRequest struct {

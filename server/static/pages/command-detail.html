@@ -1,0 +1,109 @@
+<div class="card">
+    <div class="card-header">命令详情</div>
+    <div id="command-detail" class="loading">
+        <div class="spinner"></div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">执行结果</div>
+    <div id="command-results" class="loading">
+        <div class="spinner"></div>
+    </div>
+</div>
+
+<script>
+async function initCommandDetailPage(params) {
+    const commandId = params.id;
+    await Promise.all([
+        loadCommandDetail(commandId),
+        loadCommandResults(commandId)
+    ]);
+}
+
+async function loadCommandDetail(commandId) {
+    const detailEl = document.getElementById('command-detail');
+    
+    try {
+        const command = await window.api.getCommand(commandId);
+        
+        detailEl.innerHTML = `
+            <div style="display: grid; gap: 1rem;">
+                <div class="form-group">
+                    <label class="form-label">命令ID</label>
+                    <div>${command.id}</div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">类型</label>
+                    <div>${command.type}</div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">目标</label>
+                    <div>${command.target_type}: ${command.target_id}</div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">状态</label>
+                    <div>${command.status}</div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">优先级</label>
+                    <div>${command.priority}</div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">创建时间</label>
+                    <div>${window.formatDate(command.created_at)}</div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">命令内容</label>
+                    <pre style="background: #f3f4f6; padding: 1rem; border-radius: 4px; overflow-x: auto;">${JSON.stringify(command.content, null, 2)}</pre>
+                </div>
+            </div>
+            <div style="margin-top: 2rem;">
+                <a href="#/commands" class="btn btn-secondary">返回列表</a>
+            </div>
+        `;
+    } catch (error) {
+        detailEl.innerHTML = '<div class="empty-state">加载命令详情失败</div>';
+    }
+}
+
+async function loadCommandResults(commandId) {
+    const resultsEl = document.getElementById('command-results');
+    
+    try {
+        const results = await window.api.getCommandResults(commandId);
+        const resultList = results.data || [];
+        
+        if (resultList.length > 0) {
+            resultsEl.innerHTML = `
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>设备ID</th>
+                            <th>状态</th>
+                            <th>执行时间</th>
+                            <th>输出</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${resultList.map(result => `
+                            <tr>
+                                <td>${result.device_id}</td>
+                                <td>${result.status}</td>
+                                <td>${result.executed_at ? window.formatDate(result.executed_at) : '-'}</td>
+                                <td>
+                                    ${result.output ? `<pre style="margin: 0; max-width: 400px; overflow-x: auto;">${result.output}</pre>` : '-'}
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        } else {
+            resultsEl.innerHTML = '<div class="empty-state">暂无执行结果</div>';
+        }
+    } catch (error) {
+        resultsEl.innerHTML = '<div class="empty-state">加载执行结果失败</div>';
+    }
+}
+</script>

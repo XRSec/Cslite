@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/cslite/cslite/server/internal/group"
-	"github.com/cslite/cslite/server/middleware"
+	"github.com/XRSec/Cslite/internal/group"
+	"github.com/XRSec/Cslite/middleware"
 	"github.com/gin-gonic/gin"
 )
 
@@ -40,7 +40,7 @@ func (h *GroupHandler) CreateGroup(c *gin.Context) {
 	}
 
 	user := middleware.GetCurrentUser(c)
-	
+
 	group, err := h.service.CreateGroup(user.ID, req.Name, req.Description)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -63,7 +63,7 @@ func (h *GroupHandler) CreateGroup(c *gin.Context) {
 
 func (h *GroupHandler) ListGroups(c *gin.Context) {
 	user := middleware.GetCurrentUser(c)
-	
+
 	groups, err := h.service.ListGroups(user.ID, user.IsAdmin())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -94,7 +94,7 @@ func (h *GroupHandler) ListGroups(c *gin.Context) {
 
 func (h *GroupHandler) AddDevicesToGroup(c *gin.Context) {
 	groupID := c.Param("id")
-	
+
 	var req AddDevicesRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -106,7 +106,7 @@ func (h *GroupHandler) AddDevicesToGroup(c *gin.Context) {
 	}
 
 	user := middleware.GetCurrentUser(c)
-	
+
 	addedCount, err := h.service.AddDevicesToGroup(groupID, req.DeviceIDs, user.ID, user.IsAdmin())
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
@@ -129,7 +129,7 @@ func (h *GroupHandler) AddDevicesToGroup(c *gin.Context) {
 func (h *GroupHandler) DeleteGroup(c *gin.Context) {
 	groupID := c.Param("id")
 	user := middleware.GetCurrentUser(c)
-	
+
 	reassignedDevices, err := h.service.DeleteGroup(groupID, user.ID, user.IsAdmin())
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{

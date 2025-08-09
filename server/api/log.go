@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/cslite/cslite/server/internal/log"
-	"github.com/cslite/cslite/server/middleware"
+	"github.com/XRSec/Cslite/internal/log"
+	"github.com/XRSec/Cslite/middleware"
 	"github.com/gin-gonic/gin"
 )
 
@@ -33,7 +33,7 @@ func (h *LogHandler) GetCommandLogs(c *gin.Context) {
 
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
-	
+
 	if page < 1 {
 		page = 1
 	}
@@ -77,7 +77,7 @@ func (h *LogHandler) GetDeviceLogs(c *gin.Context) {
 
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
-	
+
 	if page < 1 {
 		page = 1
 	}
@@ -110,7 +110,7 @@ func (h *LogHandler) GetDeviceLogs(c *gin.Context) {
 func (h *LogHandler) GetUserLogs(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
-	
+
 	if page < 1 {
 		page = 1
 	}
@@ -150,7 +150,7 @@ func (h *LogHandler) GetUserLogs(c *gin.Context) {
 
 func (h *LogHandler) DownloadLog(c *gin.Context) {
 	logID := c.Param("log_id")
-	
+
 	user := middleware.GetCurrentUser(c)
 	if user == nil {
 		c.JSON(http.StatusUnauthorized, gin.H{
@@ -182,7 +182,7 @@ func (h *LogHandler) DownloadLog(c *gin.Context) {
 
 	c.Header("Content-Type", "text/plain")
 	c.Header("Content-Disposition", "attachment; filename="+logID)
-	
+
 	if _, err := io.Copy(c.Writer, file); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    50001,

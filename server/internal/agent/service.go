@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/cslite/cslite/server/config"
-	"github.com/cslite/cslite/server/models"
-	"github.com/cslite/cslite/server/utils"
+	"github.com/XRSec/Cslite/config"
+	"github.com/XRSec/Cslite/models"
+	"github.com/XRSec/Cslite/utils"
 	"gorm.io/gorm"
 )
 
@@ -21,11 +21,11 @@ func NewService() *Service {
 }
 
 type HeartbeatMetrics struct {
-	CPUUsage    float64 `json:"cpu_usage"`
-	MemoryUsed  int     `json:"memory_used"`
-	DiskUsage   float64 `json:"disk_usage"`
-	NetworkIn   int     `json:"network_in"`
-	NetworkOut  int     `json:"network_out"`
+	CPUUsage   float64 `json:"cpu_usage"`
+	MemoryUsed int     `json:"memory_used"`
+	DiskUsage  float64 `json:"disk_usage"`
+	NetworkIn  int     `json:"network_in"`
+	NetworkOut int     `json:"network_out"`
 }
 
 func (s *Service) RegisterAgent(apiKey, name, platform, version string) (*models.Agent, *models.Device, error) {
@@ -76,7 +76,7 @@ func (s *Service) Heartbeat(agentID string, metrics *HeartbeatMetrics) error {
 	}
 
 	metricsJSON, _ := json.Marshal(metrics)
-	
+
 	if err := s.db.Model(&agent).Updates(map[string]interface{}{
 		"last_heartbeat":    time.Now(),
 		"heartbeat_metrics": string(metricsJSON),
@@ -111,8 +111,8 @@ func (s *Service) GetPendingCommands(agentID string) ([]*CommandTask, error) {
 
 	var commands []models.Command
 	query := s.db.Where("status IN ?", []string{models.CommandStatusPending, models.CommandStatusRunning})
-	
-	query = query.Where("(target_type = 'devices' AND JSON_CONTAINS(target_ids, ?)) OR (target_type = 'groups' AND JSON_CONTAINS(target_ids, ?))", 
+
+	query = query.Where("(target_type = 'devices' AND JSON_CONTAINS(target_ids, ?)) OR (target_type = 'groups' AND JSON_CONTAINS(target_ids, ?))",
 		`"`+device.ID+`"`, `"`+device.GroupID+`"`)
 
 	if err := query.Find(&commands).Error; err != nil {
@@ -145,7 +145,7 @@ func (s *Service) GetPendingCommands(agentID string) ([]*CommandTask, error) {
 		}
 
 		tasks = append(tasks, task)
-		
+
 		s.db.Model(&device).Update("status", models.StatusBusy)
 	}
 
@@ -201,7 +201,7 @@ func (s *Service) ReportResult(executionID, deviceID, status string, exitCode in
 		if hasFailure {
 			executionStatus = models.ExecutionStatusFailed
 		}
-		
+
 		completedAt := time.Now()
 		s.db.Model(&execution).Updates(map[string]interface{}{
 			"status":       executionStatus,

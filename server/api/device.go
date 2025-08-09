@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/cslite/cslite/server/internal/device"
-	"github.com/cslite/cslite/server/middleware"
+	"github.com/XRSec/Cslite/internal/device"
+	"github.com/XRSec/Cslite/middleware"
 	"github.com/gin-gonic/gin"
 )
 
@@ -41,7 +41,7 @@ func (h *DeviceHandler) CreateDevice(c *gin.Context) {
 	}
 
 	user := middleware.GetCurrentUser(c)
-	
+
 	device, installCmd, err := h.service.CreateDevice(user.ID, req.Name, req.Platform)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -66,7 +66,7 @@ func (h *DeviceHandler) CreateDevice(c *gin.Context) {
 func (h *DeviceHandler) ListDevices(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
-	
+
 	if page < 1 {
 		page = 1
 	}
@@ -75,7 +75,7 @@ func (h *DeviceHandler) ListDevices(c *gin.Context) {
 	}
 
 	user := middleware.GetCurrentUser(c)
-	
+
 	filters := make(map[string]interface{})
 	if status := c.Query("status"); status != "" {
 		filters["status"] = status
@@ -140,9 +140,9 @@ func (h *DeviceHandler) GetDevice(c *gin.Context) {
 	}
 
 	metrics := gin.H{
-		"cpu_usage":    15.3,
-		"memory_used":  2048,
-		"disk_usage":   45.2,
+		"cpu_usage":   15.3,
+		"memory_used": 2048,
+		"disk_usage":  45.2,
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -174,7 +174,7 @@ func (h *DeviceHandler) DeleteDevices(c *gin.Context) {
 	}
 
 	user := middleware.GetCurrentUser(c)
-	
+
 	deletedCount, err := h.service.DeleteDevices(req.IDs, user.ID, user.IsAdmin())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{

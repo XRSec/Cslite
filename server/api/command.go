@@ -5,9 +5,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/cslite/cslite/server/internal/command"
-	"github.com/cslite/cslite/server/middleware"
-	"github.com/cslite/cslite/server/models"
+	"github.com/XRSec/Cslite/internal/command"
+	"github.com/XRSec/Cslite/middleware"
+	"github.com/XRSec/Cslite/models"
 	"github.com/gin-gonic/gin"
 )
 
@@ -22,15 +22,15 @@ func NewCommandHandler() *CommandHandler {
 }
 
 type CreateCommandRequest struct {
-	Name        string                 `json:"name" binding:"required,min=1,max=100"`
-	Type        string                 `json:"type" binding:"required,oneof=once cron immediate"`
-	Schedule    string                 `json:"schedule"`
-	Content     string                 `json:"content" binding:"required"`
-	TargetType  string                 `json:"target_type" binding:"required,oneof=devices groups"`
-	TargetIDs   []string               `json:"target_ids" binding:"required,min=1"`
-	Timeout     int                    `json:"timeout" binding:"min=1,max=86400"`
-	RetryPolicy *models.RetryPolicy    `json:"retry_policy"`
-	EnvVars     map[string]string      `json:"env_vars"`
+	Name        string              `json:"name" binding:"required,min=1,max=100"`
+	Type        string              `json:"type" binding:"required,oneof=once cron immediate"`
+	Schedule    string              `json:"schedule"`
+	Content     string              `json:"content" binding:"required"`
+	TargetType  string              `json:"target_type" binding:"required,oneof=devices groups"`
+	TargetIDs   []string            `json:"target_ids" binding:"required,min=1"`
+	Timeout     int                 `json:"timeout" binding:"min=1,max=86400"`
+	RetryPolicy *models.RetryPolicy `json:"retry_policy"`
+	EnvVars     map[string]string   `json:"env_vars"`
 }
 
 type UpdateCommandStatusRequest struct {
@@ -48,6 +48,7 @@ func (h *CommandHandler) CreateCommand(c *gin.Context) {
 		return
 	}
 
+	// 验证cron类型必须有schedule
 	if req.Type == models.CommandTypeCron && req.Schedule == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code":    60002,
@@ -58,7 +59,7 @@ func (h *CommandHandler) CreateCommand(c *gin.Context) {
 	}
 
 	user := middleware.GetCurrentUser(c)
-	
+
 	input := &command.CreateCommandInput{
 		Name:        req.Name,
 		Type:        req.Type,
@@ -89,10 +90,11 @@ func (h *CommandHandler) CreateCommand(c *gin.Context) {
 		"id":         cmd.ID,
 		"created_at": cmd.CreatedAt.Format(time.RFC3339),
 	}
-	
-	if cmd.NextRun != nil {
-		response["next_run"] = cmd.NextRun.Format(time.RFC3339)
-	}
+
+	// 如果是cron类型，返回下次执行时间（供客户端参考）
+	// if cmd.NextRun != nil {
+	// 	response["next_run"] = cmd.NextRun.Format(time.RFC3339)
+	// }
 
 	c.JSON(http.StatusCreated, gin.H{
 		"code":    20000,
@@ -104,7 +106,7 @@ func (h *CommandHandler) CreateCommand(c *gin.Context) {
 func (h *CommandHandler) ListCommands(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
-	
+
 	if page < 1 {
 		page = 1
 	}
@@ -113,7 +115,7 @@ func (h *CommandHandler) ListCommands(c *gin.Context) {
 	}
 
 	user := middleware.GetCurrentUser(c)
-	
+
 	filters := make(map[string]interface{})
 	if status := c.Query("status"); status != "" {
 		filters["status"] = status
@@ -149,9 +151,10 @@ func (h *CommandHandler) ListCommands(c *gin.Context) {
 			"status":     cmd.Status,
 			"created_at": cmd.CreatedAt.Format(time.RFC3339),
 		}
-		if cmd.NextRun != nil {
-			item["next_run"] = cmd.NextRun.Format(time.RFC3339)
-		}
+		// 如果是cron类型，返回下次执行时间（供客户端参考）
+		// if cmd.NextRun != nil {
+		// 	item["next_run"] = cmd.NextRun.Format(time.RFC3339)
+		// }
 		commandList[i] = item
 	}
 
@@ -206,9 +209,10 @@ func (h *CommandHandler) GetCommand(c *gin.Context) {
 		"execution_history": executionHistory,
 	}
 
-	if cmd.NextRun != nil {
-		response["next_run"] = cmd.NextRun.Format(time.RFC3339)
-	}
+	// 如果是cron类型，返回下次执行时间（供客户端参考）
+	// if cmd.NextRun != nil {
+	// 	response["next_run"] = cmd.NextRun.Format(time.RFC3339)
+	// }
 
 	c.JSON(http.StatusOK, gin.H{
 		"code":    20000,
@@ -219,7 +223,7 @@ func (h *CommandHandler) GetCommand(c *gin.Context) {
 
 func (h *CommandHandler) UpdateCommandStatus(c *gin.Context) {
 	commandID := c.Param("id")
-	
+
 	var req UpdateCommandStatusRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -231,7 +235,7 @@ func (h *CommandHandler) UpdateCommandStatus(c *gin.Context) {
 	}
 
 	user := middleware.GetCurrentUser(c)
-	
+
 	if err := h.service.UpdateCommandStatus(commandID, req.Action, user.ID, user.IsAdmin()); err != nil {
 		if err == command.ErrInvalidCommandStatus {
 			c.JSON(http.StatusConflict, gin.H{
