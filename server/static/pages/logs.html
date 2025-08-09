@@ -1,10 +1,16 @@
 <div class="card">
     <div class="card-header">日志查询</div>
     <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
-        <select id="log-type" class="form-control" style="width: 200px;">
-            <option value="command">命令日志</option>
-            <option value="device">设备日志</option>
+        <select id="log-type" class="form-control" style="width: 200px;" onchange="onLogTypeChange()">
             <option value="user">用户日志</option>
+            <option value="device">设备日志</option>
+            <option value="command">命令日志</option>
+        </select>
+        <select id="command-select" class="form-control" style="width: 200px; display: none;">
+            <option value="">选择命令...</option>
+        </select>
+        <select id="device-select" class="form-control" style="width: 200px; display: none;">
+            <option value="">选择设备...</option>
         </select>
         <input type="date" id="start-date" class="form-control" style="width: 200px;">
         <input type="date" id="end-date" class="form-control" style="width: 200px;">
@@ -16,6 +22,9 @@
 </div>
 
 <script>
+let commands = [];
+let devices = [];
+
 async function initLogsPage() {
     const endDate = new Date();
     const startDate = new Date();
@@ -24,7 +33,41 @@ async function initLogsPage() {
     document.getElementById('start-date').value = startDate.toISOString().split('T')[0];
     document.getElementById('end-date').value = endDate.toISOString().split('T')[0];
     
+    // Load commands and devices for dropdowns
+    try {
+        const [commandsResponse, devicesResponse] = await Promise.all([
+            window.api.getCommands(),
+            window.api.getDevices()
+        ]);
+        
+        if (commandsResponse && commandsResponse.data && commandsResponse.data.commands) {
+            commands = commandsResponse.data.commands;
+            const commandSelect = document.getElementById('command-select');
+            commandSelect.innerHTML = '<option value="">选择命令...</option>' + 
+                commands.map(cmd => `<option value="${cmd.id}">${cmd.name}</option>`).join('');
+        }
+        
+        if (devicesResponse && devicesResponse.data && devicesResponse.data.devices) {
+            devices = devicesResponse.data.devices;
+            const deviceSelect = document.getElementById('device-select');
+            deviceSelect.innerHTML = '<option value="">选择设备...</option>' + 
+                devices.map(device => `<option value="${device.id}">${device.name}</option>`).join('');
+        }
+    } catch (error) {
+        console.error('Failed to load commands/devices:', error);
+    }
+    
     await searchLogs();
+}
+
+function onLogTypeChange() {
+    const logType = document.getElementById('log-type').value;
+    const commandSelect = document.getElementById('command-select');
+    const deviceSelect = document.getElementById('device-select');
+    
+    // Show/hide relevant selectors
+    commandSelect.style.display = logType === 'command' ? 'block' : 'none';
+    deviceSelect.style.display = logType === 'device' ? 'block' : 'none';
 }
 
 async function searchLogs() {
@@ -39,6 +82,23 @@ async function searchLogs() {
         const params = {};
         if (startDate) params.start_time = startDate + 'T00:00:00Z';
         if (endDate) params.end_time = endDate + 'T23:59:59Z';
+        
+        // Add type-specific parameters
+        if (logType === 'command') {
+            const commandId = document.getElementById('command-select').value;
+            if (!commandId) {
+                listEl.innerHTML = '<div class="empty-state">请选择命令</div>';
+                return;
+            }
+            params.command_id = commandId;
+        } else if (logType === 'device') {
+            const deviceId = document.getElementById('device-select').value;
+            if (!deviceId) {
+                listEl.innerHTML = '<div class="empty-state">请选择设备</div>';
+                return;
+            }
+            params.device_id = deviceId;
+        }
         
         const response = await window.api.getLogs(logType, params);
         const logs = (response && response.data && Array.isArray(response.data.logs)) ? response.data.logs : [];
@@ -58,10 +118,10 @@ async function searchLogs() {
                     <tbody>
                         ${logs.map(log => `
                             <tr>
-                                <td>${window.formatDate(log.timestamp)}</td>
-                                <td>${log.level || 'INFO'}</td>
-                                <td>${log.source || '-'}</td>
-                                <td>${log.message || '-'}</td>
+                                <td>${window.formatDate(log.timestamp || log.created_at)}</td>
+                                <td>${log.level || log.status || 'INFO'}</td>
+                                <td>${log.source || log.device_name || log.username || '-'}</td>
+                                <td>${log.message || log.content || log.action || '-'}</td>
                                 <td>
                                     ${log.downloadable ? `<a href="/api/logs/download/${log.id}" class="btn btn-secondary" style="font-size: 0.75rem; padding: 0.25rem 0.5rem;">下载</a>` : '-'}
                                 </td>
@@ -74,6 +134,7 @@ async function searchLogs() {
             listEl.innerHTML = '<div class="empty-state">暂无日志</div>';
         }
     } catch (error) {
+        console.error('Error loading logs:', error);
         listEl.innerHTML = '<div class="empty-state">加载日志失败</div>';
     }
 }
