@@ -41,7 +41,7 @@ async function searchLogs() {
         if (endDate) params.end_time = endDate + 'T23:59:59Z';
         
         const response = await window.api.getLogs(logType, params);
-        const logs = response.data || [];
+        const logs = (response && response.data && Array.isArray(response.data.logs)) ? response.data.logs : [];
         
         if (logs.length > 0) {
             listEl.innerHTML = `

@@ -25,7 +25,10 @@ async function loadCommandDetail(commandId) {
     const detailEl = document.getElementById('command-detail');
     
     try {
-        const command = await window.api.getCommand(commandId);
+        const res = await window.api.getCommand(commandId);
+        const command = res && res.data ? res.data : null;
+        
+        if (!command) throw new Error('not found');
         
         detailEl.innerHTML = `
             <div style="display: grid; gap: 1rem;">
@@ -39,7 +42,7 @@ async function loadCommandDetail(commandId) {
                 </div>
                 <div class="form-group">
                     <label class="form-label">目标</label>
-                    <div>${command.target_type}: ${command.target_id}</div>
+                    <div>${command.target_type}: ${(Array.isArray(command.target_ids) && command.target_ids.length > 0) ? command.target_ids.join(', ') : '-'}</div>
                 </div>
                 <div class="form-group">
                     <label class="form-label">状态</label>
@@ -47,7 +50,7 @@ async function loadCommandDetail(commandId) {
                 </div>
                 <div class="form-group">
                     <label class="form-label">优先级</label>
-                    <div>${command.priority}</div>
+                    <div>${command.priority ?? '-'}</div>
                 </div>
                 <div class="form-group">
                     <label class="form-label">创建时间</label>
@@ -72,7 +75,7 @@ async function loadCommandResults(commandId) {
     
     try {
         const results = await window.api.getCommandResults(commandId);
-        const resultList = results.data || [];
+        const resultList = (results && results.data && Array.isArray(results.data.executions)) ? results.data.executions : [];
         
         if (resultList.length > 0) {
             resultsEl.innerHTML = `
