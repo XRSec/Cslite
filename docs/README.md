@@ -23,4 +23,4 @@
 
 - 服务端仅提供 HTTP API 与数据存储，不内置任务调度；默认 HTTP，不启用 HTTPS
 - 前端提交任务入库；客户端通过轮询拉取任务并执行，上报结果入库（拉取与上报均可视为心跳）
-- 会话默认使用 Cookie；开发模式允许 HTTP Cookie，生产建议开启 HTTPS 并设置 `Secure`
+- 会话使用 Cookie，长期使用 HTTP 目前暂不考虑 HTTPS, 可使用 NGINX 反代提供 HTTPS
