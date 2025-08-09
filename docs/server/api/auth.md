@@ -1,7 +1,7 @@
-# 用户认证 API
+# 认证 API（概要）
 
-> **最后更新**: 2025-06-20  
-> **文档状态**: 正式发布
+- 登录成功设置 Cookie 会话；响应体含 `data.user` 与 `data.session_token`
+- 开发模式默认 HTTP；生产建议 HTTPS 并启用 Cookie Secure
 
 ---
 
