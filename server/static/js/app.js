@@ -10,15 +10,16 @@ function updateAuthUI() {
     if (user) {
         authLink.textContent = `${user.username} (退出)`;
         authLink.href = '#/logout';
-        authLink.addEventListener('click', async (e) => {
+        authLink.onclick = async (e) => {
             e.preventDefault();
             if (confirm('确定要退出登录吗？')) {
                 await window.api.logout();
             }
-        });
+        };
     } else {
         authLink.textContent = '登录';
         authLink.href = '#/login';
+        authLink.onclick = null;
     }
 }
 

@@ -18,10 +18,7 @@ class API {
             }
         };
 
-        // 如果有令牌且不需要跳过认证，则添加认证头
-        if (this.token && !options.noAuth) {
-            config.headers['Authorization'] = `Bearer ${this.token}`;
-        }
+        // 使用基于 Cookie 的会话认证，不自动添加 Authorization 头
 
         // 如果是POST、PUT或PATCH请求且有数据，则添加请求体
         if (data && ['POST', 'PUT', 'PATCH'].includes(method)) {
@@ -55,12 +52,17 @@ class API {
 
     // 用户登录
     async login(username, password) {
-        const response = await this.request('POST', '/auth/login', { username, password }, { noAuth: true });
-        if (response.token) {
-            this.setToken(response.token);
-            localStorage.setItem(window.CONFIG.USER_KEY, JSON.stringify(response.user));
+        const res = await this.request('POST', '/auth/login', { username, password }, { noAuth: true });
+        // 后端返回 { code, message, data: { user, session_token } }
+        const data = res.data || {};
+        if (data.session_token) {
+            // 对于基于 Cookie 的会话，不需要存储 token，但保留以兼容
+            this.setToken(data.session_token);
         }
-        return response;
+        if (data.user) {
+            localStorage.setItem(window.CONFIG.USER_KEY, JSON.stringify(data.user));
+        }
+        return data;
     }
 
     // 用户登出
