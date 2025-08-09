@@ -20,6 +20,7 @@ const mimeTypes = {
 };
 
 const server = http.createServer((req, res) => {
+    console.log(`${req.method} ${req.url}`);
     
     const parsedUrl = url.parse(req.url);
     let pathname = parsedUrl.pathname;
@@ -50,6 +51,7 @@ const server = http.createServer((req, res) => {
     
     fs.readFile(filePath, (err, data) => {
         if (err) {
+            console.error('File not found:', filePath);
             res.writeHead(404);
             res.end('Not Found');
             return;
@@ -60,9 +62,7 @@ const server = http.createServer((req, res) => {
         
         res.writeHead(200, { 
             'Content-Type': contentType,
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'Pragma': 'no-cache',
-            'Expires': '0'
+            'Cache-Control': 'no-cache'
         });
         res.end(data);
     });
