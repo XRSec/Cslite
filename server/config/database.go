@@ -22,7 +22,8 @@ func InitDatabase() error {
 
 	// 配置GORM日志模式
 	gormConfig := &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info),
+		// Logger: logger.Default.LogMode(logger.Info),
+		Logger = logger.Default.LogMode(logger.Error)
 	}
 
 	// 在生产环境中只记录错误日志
