@@ -73,6 +73,27 @@ func AdminRequired() gin.HandlerFunc {
 	}
 }
 
+// DBReadyOrServiceUnavailable ensures database is initialized before serving protected routes
+func DBReadyOrServiceUnavailable() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// 允许健康检查与登录等公开接口直接通过
+		if c.Request.URL.Path == "/health" || strings.HasPrefix(c.Request.URL.Path, "/api/auth/login") {
+			c.Next()
+			return
+		}
+		if !config.IsDatabaseReady() {
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"code":    50300,
+				"message": "服务初始化中，请稍后再试",
+				"data":    nil,
+			})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
 // authenticateRequest 验证请求的认证信息
 func authenticateRequest(c *gin.Context) (*models.User, error) {
 	authService := auth.NewService()
