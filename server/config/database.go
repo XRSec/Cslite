@@ -2,6 +2,8 @@
 package config
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"time"
 
@@ -47,6 +49,11 @@ func InitDatabase() error {
 	sqlDB.SetMaxOpenConns(100)          // 最大打开连接数
 	sqlDB.SetConnMaxLifetime(time.Hour) // 连接最大生命周期
 
+	// 快速健康检查，避免启动时长时间挂起
+	if err := pingWithTimeout(sqlDB, 5*time.Second); err != nil {
+		return fmt.Errorf("database ping failed: %w", err)
+	}
+
 	logrus.Info("Connected to database successfully")
 
 	// 运行数据库迁移
@@ -62,12 +69,23 @@ func InitDatabase() error {
 	return nil
 }
 
+// pingWithTimeout 在给定超时时间内对数据库进行Ping
+func pingWithTimeout(db *sql.DB, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return db.PingContext(ctx)
+}
+
 // autoMigrate 自动迁移数据库表结构
 func autoMigrate() error {
 	logrus.Info("Running database migrations...")
+	start := time.Now()
+	// 在超时上下文中执行迁移，避免卡死
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
 	// 自动创建或更新所有模型对应的数据库表
-	return DB.AutoMigrate(
+	err := DB.WithContext(ctx).AutoMigrate(
 		&models.User{},            // 用户表
 		&models.Session{},         // 会话表
 		&models.APIKey{},          // API密钥表
@@ -78,6 +96,8 @@ func autoMigrate() error {
 		&models.Execution{},       // 执行记录表
 		&models.ExecutionResult{}, // 执行结果表
 	)
+	logrus.WithField("took", time.Since(start)).Info("Database migrations finished")
+	return err
 }
 
 // createDefaultUser 创建默认用户（如果不存在）
