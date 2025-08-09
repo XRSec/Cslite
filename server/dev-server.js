@@ -4,7 +4,7 @@ const path = require('path');
 const url = require('url');
 
 const PORT = 3000;
-const STATIC_DIR = __dirname; // 当前目录 (static)
+const STATIC_DIR = path.join(__dirname, 'static'); // static子目录
 
 // MIME类型映射
 const mimeTypes = {
@@ -20,7 +20,6 @@ const mimeTypes = {
 };
 
 const server = http.createServer((req, res) => {
-    console.log(`${req.method} ${req.url}`);
     
     const parsedUrl = url.parse(req.url);
     let pathname = parsedUrl.pathname;
@@ -51,7 +50,6 @@ const server = http.createServer((req, res) => {
     
     fs.readFile(filePath, (err, data) => {
         if (err) {
-            console.error('File not found:', filePath);
             res.writeHead(404);
             res.end('Not Found');
             return;

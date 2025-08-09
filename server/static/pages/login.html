@@ -15,20 +15,13 @@
 
 <script>
 window.initLoginPage = function() {
-    console.log('initLoginPage called');
     const form = document.getElementById('login-form');
-    if (!form) {
-        console.error('Login form not found');
-        return;
-    }
     
     form.addEventListener('submit', async (e) => {
-        console.log('Form submitted');
         e.preventDefault();
         
         const username = document.getElementById('username').value;
         const password = document.getElementById('password').value;
-        console.log('Login attempt:', username);
         
         try {
             const data = await window.api.login(username, password);
@@ -36,13 +29,8 @@ window.initLoginPage = function() {
             window.updateAuthUI();
             window.router.navigate('/');
         } catch (error) {
-            console.error('Login error:', error);
             window.showToast(error.message || '登录失败', 'error');
         }
     });
-    console.log('Login form event listener added');
 }
-
-// 确保函数立即可用
-console.log('Login page script loaded, initLoginPage available:', typeof window.initLoginPage);
 </script>

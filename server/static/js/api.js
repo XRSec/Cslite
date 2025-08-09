@@ -8,7 +8,6 @@ class API {
     // 通用请求方法
     async request(method, endpoint, data = null, options = {}) {
         const url = `${this.baseURL}${endpoint}`;
-        console.log(`API Request: ${method} ${url}`, data);
         const config = {
             method,
             headers: {
@@ -28,9 +27,7 @@ class API {
 
         try {
             const response = await fetch(url, config);
-            console.log(`API Response: ${response.status}`, response);
             const responseData = await response.json();
-            console.log('Response data:', responseData);
 
             if (!response.ok) {
                 throw new Error(responseData.error || `HTTP error! status: ${response.status}`);
@@ -42,7 +39,6 @@ class API {
             
             // 如果后端不可用，提供mock响应用于前端测试
             if (error.message.includes('Failed to fetch') || error.message.includes('net::ERR_CONNECTION_REFUSED')) {
-                console.warn('Backend not available, using mock response for', endpoint);
                 return this.getMockResponse(method, endpoint, data);
             }
             
@@ -52,7 +48,6 @@ class API {
 
     // 模拟API响应，用于前端独立测试
     getMockResponse(method, endpoint, data) {
-        console.log('Mock API call:', method, endpoint, data);
         
         if (method === 'POST' && endpoint === '/auth/login') {
             // 模拟登录成功

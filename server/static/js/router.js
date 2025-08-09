@@ -32,34 +32,26 @@ class Router {
     }
 
     async handleRoute() {
-        console.log('=== handleRoute called ===');
         const hash = window.location.hash.slice(1) || '/';
-        console.log('Current hash:', hash);
         const route = this.matchRoute(hash);
-        console.log('Matched route:', route);
         
         if (!route) {
-            console.log('No route matched, navigating to /');
             this.navigate('/');
             return;
         }
 
         if (route.auth && !this.isAuthenticated()) {
-            console.log('Auth required but not authenticated, navigating to login');
             this.navigate('/login');
             return;
         }
 
         if (!route.auth && this.isAuthenticated() && route.page === 'login') {
-            console.log('Already authenticated, navigating to /');
             this.navigate('/');
             return;
         }
 
-        console.log('Loading page:', route.page);
         await this.loadPage(route.page, route.params);
         this.updateNavigation(hash);
-        console.log('Route handling complete');
     }
 
     matchRoute(path) {
@@ -80,7 +72,6 @@ class Router {
     }
 
     async loadPage(pageName, params = {}) {
-        console.log('=== loadPage called ===', pageName, params);
         const transitionEl = this.contentEl.querySelector('.page-transition');
         
         transitionEl.classList.add('fade-out');
@@ -89,16 +80,12 @@ class Router {
         try {
             let content;
             
-            console.log('Checking cache for', pageName);
             if (this.pageCache.has(pageName) && !this.shouldInvalidateCache(pageName)) {
                 content = this.pageCache.get(pageName);
-                console.log('Using cached content for', pageName);
             } else {
-                console.log('Fetching content for', pageName);
                 const response = await fetch(`/static/pages/${pageName}.html`);
                 if (!response.ok) throw new Error('Page not found');
                 content = await response.text();
-                console.log('Fetched content length:', content.length);
                 
                 if (this.isCacheable(pageName)) {
                     this.pageCache.set(pageName, content);
@@ -106,15 +93,11 @@ class Router {
                 }
             }
 
-            console.log('Setting innerHTML for', pageName);
             transitionEl.innerHTML = content;
             
             // 执行插入页面中的脚本标签，确保 initXXXPage 可用
-            console.log('Looking for scripts in page');
             const scripts = Array.from(transitionEl.querySelectorAll('script'));
-            console.log('Found', scripts.length, 'scripts');
             for (const oldScript of scripts) {
-                console.log('Processing script:', oldScript.textContent.substring(0, 100) + '...');
                 const newScript = document.createElement('script');
                 if (oldScript.src) {
                     newScript.src = oldScript.src;
@@ -124,7 +107,6 @@ class Router {
                 }
                 document.body.appendChild(newScript);
                 oldScript.remove();
-                console.log('Script processed and executed');
             }
 
             transitionEl.classList.remove('fade-out');
@@ -134,12 +116,8 @@ class Router {
             transitionEl.classList.remove('fade-in');
 
             const initFunctionName = `init${this.toPascalCase(pageName)}Page`;
-            console.log('Looking for init function:', initFunctionName);
-            console.log('Function exists?', typeof window[initFunctionName]);
             if (window[`init${this.toPascalCase(pageName)}Page`]) {
-                console.log('Calling init function:', initFunctionName);
                 window[`init${this.toPascalCase(pageName)}Page`](params);
-                console.log('Init function called successfully');
             } else {
                 console.warn('Init function not found:', initFunctionName);
             }
