@@ -1,0 +1,25 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+NODE_BIN=""
+for candidate in /var/lang/node22/bin/node /var/lang/node20/bin/node /var/lang/node18/bin/node /usr/local/bin/node; do
+  if [ -x "$candidate" ]; then
+    NODE_BIN="$candidate"
+    break
+  fi
+done
+
+if [ -z "$NODE_BIN" ]; then
+  NODE_BIN="$(command -v node || true)"
+fi
+
+if [ -z "$NODE_BIN" ]; then
+  echo "Error: Node.js binary not found" >&2
+  exit 1
+fi
+
+export CSLITE_PORT="${SCF_SERVER_PORT:-${CSLITE_PORT:-9000}}"
+exec "$NODE_BIN" "$SCRIPT_DIR/index.mjs"

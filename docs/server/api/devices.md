@@ -1,416 +1,174 @@
-# 设备 API（概要）
+# 设备与分组 API
 
-- 设备状态依赖客户端心跳与结果上报；无服务端推送
+> **路由前缀**: `/api/devices`、`/api/groups`（[源码：`devices.ts`](../../../server/src/routes/devices.ts)、[`groups.ts`](../../../server/src/routes/groups.ts)）
+
+- 所有接口均需登录认证（`Cookie: cslite_session=...`、`X-API-Key` 或 `Bearer`）。
+- 设备在线状态依据 `last_seen` 与 `max(CSLITE_HEARTBEAT_INTERVAL * 3, 90)` 秒阈值实时计算（默认心跳 60 秒对应 180 秒离线判定窗口）。
 
 ---
 
 ## 接口概览
 
-| 接口 | 方法 | 路径 | 描述 | 权限 |
-|------|------|------|------|------|
-| 添加设备 | POST | `/devices` | 添加新设备 | 需要登录 |
-| 获取设备列表 | GET | `/devices` | 获取设备列表 | 需要登录 |
-| 获取设备详情 | GET | `/devices/{id}` | 获取设备详细信息 | 需要登录 |
-| 查询设备状态 | GET | `/devices/status` | 查询设备在线状态 | 需要登录 |
-| 批量删除设备 | DELETE | `/devices` | 批量删除设备 | 需要登录 |
+### 设备管理 `/api/devices`
+
+| 接口         | 方法               | 路径                         | 描述                             |
+| ------------ | ------------------ | ---------------------------- | -------------------------------- |
+| 预创建设备   | POST               | `/api/devices`               | 创建设备槽位并生成多平台安装命令 |
+| 设备列表     | GET                | `/api/devices`               | 分页与多维度筛选设备列表         |
+| 查询设备状态 | GET                | `/api/devices/status?id=...` | 查询单台设备实时在线状态与指标   |
+| 设备详情     | GET                | `/api/devices/{id}`          | 获取单台设备完整信息             |
+| 更新设备     | PATCH / PUT        | `/api/devices/{id}`          | 修改名称、平台或所属分组         |
+| 批量删除设备 | DELETE / POST      | `/api/devices`、`/api/devices/batch-delete` | 批量删除多台设备 |
+| 删除单个设备 | DELETE             | `/api/devices/{id}`          | 删除指定设备                     |
+
+### 分组管理 `/api/groups`
+
+| 接口         | 方法   | 路径                        | 描述                       |
+| ------------ | ------ | --------------------------- | -------------------------- |
+| 创建分组     | POST   | `/api/groups`               | 创建设备分组               |
+| 分组列表     | GET    | `/api/groups`               | 获取分组及包含设备数量     |
+| 更新分组     | PUT    | `/api/groups/{id}`          | 修改分组名称或描述         |
+| 批量添加设备 | PUT    | `/api/groups/{id}/devices`  | 将多台设备绑定到指定分组   |
+| 批量移除设备 | DELETE | `/api/groups/{id}/devices`  | 将设备从分组解绑           |
+| 删除分组     | DELETE | `/api/groups/{id}`          | 删除分组并自动解绑旗下设备 |
 
 ---
 
-## 添加设备
+## 设备接口详情
 
-### `POST /devices`
+### `POST /api/devices` — 预创建设备
 
-添加新设备，生成安装命令。
+创建设备槽位并返回适用于 **Linux**、**OpenWrt (Go)**、**OpenWrt (Lite)**、**macOS** 与 **Windows** 的安装命令。
 
 **请求参数**：
 
 ```json
 {
-  "name": "Production Server",
-  "platform": "linux/amd64"
+  "name": "openwrt-gw-01",
+  "platform": "openwrt",
+  "group_id": "grp_0123456789abcdef"
 }
 ```
 
-| 参数名   | 类型   | 必填 | 说明                    |
-| -------- | ------ | ---- | ----------------------- |
-| name     | string | 是   | 设备名称（1-100字符）   |
-| platform | string | 是   | 平台信息（如 linux/amd64） |
+| 参数名   | 类型   | 必填 | 说明                                                      |
+| -------- | ------ | ---- | --------------------------------------------------------- |
+| name     | string | 是   | 设备显示名称（1-100 字符）                                |
+| platform | string | 是   | 平台类型：`linux`、`openwrt`、`macos`、`windows` 等（1-64 字符） |
+| group_id | string | 否   | 初始所属分组 ID                                           |
 
 **成功响应** (201)：
 
 ```json
 {
   "code": 20000,
-  "message": "设备添加成功",
+  "message": "Device created",
   "data": {
-    "id": "dev_abc123",
-    "name": "Production Server",
-    "platform": "linux/amd64",
-    "install_command": "curl -sSL https://agent.cslite.com/install | bash -s YOUR_API_KEY",
-    "expires_at": "2025-06-27T12:00:00Z"
-  }
-}
-```
-
-**错误响应**：
-
-| 错误码 | HTTP 状态 | 说明           |
-| ------ | --------- | -------------- |
-| 40004  | 400       | 参数缺失或格式错误 |
-| 40008  | 400       | 数据验证失败   |
-| 40009  | 409       | 设备名称已存在 |
-
-**示例**：
-
-```bash
-curl -X POST https://api.cslite.com/devices \
-  -H "Content-Type: application/json" \
-  -H "Cookie: session=sess_abc123def456" \
-  -d '{
-    "name": "Production Server",
-    "platform": "linux/amd64"
-  }'
-```
-
----
-
-## 获取设备列表
-
-### `GET /devices`
-
-获取设备列表，支持分页和过滤。
-
-**查询参数**：
-
-| 参数名 | 类型   | 必填 | 说明                    |
-| ------ | ------ | ---- | ----------------------- |
-| status | string | 否   | 在线状态 (online/offline) |
-| group  | string | 否   | 群组ID                  |
-| owner  | int    | 否   | 用户ID（仅管理员）      |
-| page   | int    | 否   | 页码（默认1）           |
-| limit  | int    | 否   | 每页数量（默认20）      |
-| search | string | 否   | 设备名称搜索            |
-
-**成功响应** (200)：
-
-```json
-{
-  "code": 20000,
-  "message": "获取成功",
-  "data": {
-    "total": 15,
-    "page": 1,
-    "per_page": 5,
-    "devices": [
-      {
-        "id": "dev_abc123",
-        "name": "Production Server",
-        "platform": "linux/amd64",
-        "status": "online",
-        "owner_id": 1001,
-        "group_id": "grp_001",
-        "last_seen": "2025-06-20T12:30:00Z",
-        "ip_address": "192.168.1.100"
-      },
-      {
-        "id": "dev_def456",
-        "name": "Test Server",
-        "platform": "linux/amd64",
-        "status": "offline",
-        "owner_id": 1001,
-        "group_id": null,
-        "last_seen": "2025-06-19T18:45:00Z",
-        "ip_address": "192.168.1.101"
-      }
-    ]
-  }
-}
-```
-
-**错误响应**：
-
-| 错误码 | HTTP 状态 | 说明           |
-| ------ | --------- | -------------- |
-| 40003  | 401       | 登录状态已过期 |
-| 40004  | 400       | 参数格式错误   |
-
-**示例**：
-
-```bash
-curl -X GET "https://api.cslite.com/devices?status=online&page=1&limit=10" \
-  -H "Cookie: session=sess_abc123def456"
-```
-
----
-
-## 获取设备详情
-
-### `GET /devices/{id}`
-
-获取指定设备的详细信息。
-
-**路径参数**：
-
-| 参数名 | 类型   | 必填 | 说明   |
-| ------ | ------ | ---- | ------ |
-| id     | string | 是   | 设备ID |
-
-**成功响应** (200)：
-
-```json
-{
-  "code": 20000,
-  "message": "获取成功",
-  "data": {
-    "id": "dev_abc123",
-    "name": "Production Server",
-    "platform": "linux/amd64",
-    "status": "online",
-    "metrics": {
-      "cpu_usage": 15.3,
-      "memory_used": 2048,
-      "disk_usage": 45.2
+    "id": "dev_0123456789abcdef",
+    "name": "openwrt-gw-01",
+    "platform": "openwrt",
+    "install_command": "cslite-agent install --server \"http://127.0.0.1:9000\" --key YOUR_API_KEY --device-id \"dev_0123456789abcdef\" --name 'openwrt-gw-01'",
+    "install_commands": {
+      "linux": "cslite-agent install --server \"http://127.0.0.1:9000\" --key YOUR_API_KEY --device-id \"dev_0123456789abcdef\" --name 'openwrt-gw-01'",
+      "openwrt": "cslite-agent install --server \"http://127.0.0.1:9000\" --key YOUR_API_KEY --device-id \"dev_0123456789abcdef\" --name 'openwrt-gw-01'",
+      "openwrt_lite": "CSLITE_SERVER=\"http://127.0.0.1:9000\" CSLITE_API_KEY=\"YOUR_API_KEY\" CSLITE_DEVICE_ID=\"dev_0123456789abcdef\" CSLITE_NAME='openwrt-gw-01' /usr/bin/cslite-agent-lite run",
+      "macos": "cslite-agent install --server \"http://127.0.0.1:9000\" --key YOUR_API_KEY --device-id \"dev_0123456789abcdef\" --name 'openwrt-gw-01'",
+      "windows": "cslite-agent.exe install --server \"http://127.0.0.1:9000\" --key YOUR_API_KEY --device-id \"dev_0123456789abcdef\" --name \"openwrt-gw-01\""
     },
-    "owner_id": 1001,
-    "group_id": "grp_001",
-    "created_at": "2025-06-15T09:00:00Z",
-    "last_seen": "2025-06-20T12:30:00Z",
-    "ip_address": "192.168.1.100"
+    "expires_at": "2026-01-08T00:00:00.000Z"
   }
 }
 ```
 
-**错误响应**：
-
-| 错误码 | HTTP 状态 | 说明           |
-| ------ | --------- | -------------- |
-| 40010  | 404       | 设备不存在     |
-| 40002  | 403       | 权限不足       |
-
-**示例**：
-
-```bash
-curl -X GET https://api.cslite.com/devices/dev_abc123 \
-  -H "Cookie: session=sess_abc123def456"
-```
-
----
-
-## 查询设备状态
-
-### `GET /devices/status`
-
-查询指定设备的在线状态和指标。
+### `GET /api/devices` — 获取设备列表
 
 **查询参数**：
 
-| 参数名 | 类型   | 必填 | 说明   |
-| ------ | ------ | ---- | ------ |
-| id     | string | 是   | 设备ID |
+| 参数名             | 类型   | 说明                                                       |
+| ------------------ | ------ | ---------------------------------------------------------- |
+| `status`           | string | 按在线状态过滤：`online` / `offline`                       |
+| `group`/`group_id` | string | 分组 ID；传 `__none__` 或 `ungrouped` 过滤未分组设备       |
+| `platform`         | string | 平台过滤，支持前缀匹配（如 `linux` 可匹配 `linux/amd64`）  |
+| `owner`            | int    | 按所有者用户 ID 过滤（仅管理员生效）                       |
+| `search`           | string | 模糊搜索 `name`、`hostname` 或 `ip_address`                |
+| `page`             | int    | 页码（默认 `1`）                                           |
+| `limit`/`per_page` | int    | 每页条数（默认 `20`，最大 `100`）                          |
+
+### `GET /api/devices/status?id={device_id}` — 查询设备状态
 
 **成功响应** (200)：
 
 ```json
 {
   "code": 20000,
-  "message": "查询成功",
+  "message": "OK",
   "data": {
-    "id": "dev_abc123",
+    "id": "dev_0123456789abcdef",
     "status": "online",
-    "last_updated": "2025-06-20T13:00:00Z",
+    "last_updated": "2026-01-01T00:05:00.000Z",
     "metrics": {
-      "cpu_usage": 12.3,
-      "memory_usage": 1536,
-      "disk_usage": 41
+      "cpu_usage": 12.4,
+      "memory_used": 512,
+      "memory_total": 2048,
+      "memory_percent": 25.0,
+      "disk_usage": 41.2,
+      "disk_total": 20480,
+      "network_in": 18,
+      "network_out": 6,
+      "load_avg": "0.15 0.12 0.08",
+      "uptime": 86400
     }
   }
 }
 ```
 
-**错误响应**：
+### `PATCH /api/devices/{id}` / `PUT /api/devices/{id}` — 更新设备
 
-| 错误码 | HTTP 状态 | 说明           |
-| ------ | --------- | -------------- |
-| 40010  | 404       | 设备不存在     |
-| 40011  | 409       | 设备离线       |
+请求体支持 `name`、`platform`、`group_id`（传 `null` 或 `""` 可将设备移出分组）。
 
-**示例**：
+### `DELETE /api/devices` / `POST /api/devices/batch-delete` — 批量删除设备
 
 ```bash
-curl -X GET "https://api.cslite.com/devices/status?id=dev_abc123" \
-  -H "Cookie: session=sess_abc123def456"
+curl -X DELETE http://127.0.0.1:9000/api/devices \
+  -H "Content-Type: application/json" \
+  -b cookies.txt \
+  -d '{"ids":["dev_0123456789abcdef","dev_fedcba9876543210"]}'
 ```
 
 ---
 
-## 批量删除设备
+## 分组接口详情
 
-### `DELETE /devices`
-
-批量删除设备。
-
-**请求参数**：
-
-```json
-{
-  "ids": ["dev_abc123", "dev_def456"]
-}
-```
-
-| 参数名 | 类型     | 必填 | 说明     |
-| ------ | -------- | ---- | -------- |
-| ids    | string[] | 是   | 设备ID列表 |
-
-**成功响应** (200)：
-
-```json
-{
-  "code": 20000,
-  "message": "删除成功",
-  "data": {
-    "deleted_count": 2
-  }
-}
-```
-
-**错误响应**：
-
-| 错误码 | HTTP 状态 | 说明           |
-| ------ | --------- | -------------- |
-| 40004  | 400       | 参数缺失或格式错误 |
-| 40010  | 404       | 部分设备不存在 |
-| 40002  | 403       | 权限不足       |
-
-**示例**：
+### `POST /api/groups` — 创建分组
 
 ```bash
-curl -X DELETE https://api.cslite.com/devices \
+curl -X POST http://127.0.0.1:9000/api/groups \
   -H "Content-Type: application/json" \
-  -H "Cookie: session=sess_abc123def456" \
-  -d '{
-    "ids": ["dev_abc123", "dev_def456"]
-  }'
+  -b cookies.txt \
+  -d '{"name":"edge-routers","description":"OpenWrt 边缘路由"}'
 ```
 
----
+### `PUT /api/groups/{id}/devices` 与 `DELETE /api/groups/{id}/devices`
 
-## 设备状态说明
-
-### 在线状态
-
-| 状态      | 描述        | 判断条件                    |
-| --------- | ----------- | --------------------------- |
-| online    | 在线        | 最近1小时内有心跳签到      |
-| offline   | 离线        | 超过1小时未心跳签到        |
-| busy      | 忙碌        | 当前正在执行命令            |
-
-### 设备指标
-
-| 指标名        | 类型   | 单位 | 说明           |
-| ------------- | ------ | ---- | -------------- |
-| cpu_usage     | float  | %    | CPU 使用率     |
-| memory_used   | int    | MB   | 内存使用量     |
-| memory_usage  | float  | %    | 内存使用率     |
-| disk_usage    | float  | %    | 磁盘使用率     |
-| network_in    | int    | KB/s | 网络入流量     |
-| network_out   | int    | KB/s | 网络出流量     |
-
----
-
-## 设备分组
-
-### 设备分组操作
-
-设备可以分配到不同的群组中进行管理：
+批量将设备移入或移出分组：
 
 ```bash
-# 将设备添加到群组
-curl -X PUT https://api.cslite.com/groups/grp_001/devices \
+curl -X PUT http://127.0.0.1:9000/api/groups/grp_0123456789abcdef/devices \
   -H "Content-Type: application/json" \
-  -H "Cookie: session=sess_abc123def456" \
-  -d '{
-    "device_ids": ["dev_abc123", "dev_def456"]
-  }'
-
-# 从群组中移除设备
-curl -X DELETE https://api.cslite.com/groups/grp_001/devices \
-  -H "Content-Type: application/json" \
-  -H "Cookie: session=sess_abc123def456" \
-  -d '{
-    "device_ids": ["dev_abc123"]
-  }'
+  -b cookies.txt \
+  -d '{"device_ids":["dev_0123456789abcdef"]}'
 ```
 
 ---
 
 ## 权限说明
 
-### 设备权限
-
-| 操作 | 普通用户 | 管理员 | 说明 |
-|------|----------|--------|------|
-| 查看自己的设备 | ✓ | ✓ | 只能查看自己创建的设备 |
-| 查看所有设备 | ✗ | ✓ | 管理员可以查看所有设备 |
-| 添加设备 | ✓ | ✓ | 都可以添加设备 |
-| 删除自己的设备 | ✓ | ✓ | 只能删除自己的设备 |
-| 删除所有设备 | ✗ | ✓ | 管理员可以删除所有设备 |
-
-### 设备归属
-
-- 设备创建后归属于创建者
-- 普通用户只能管理自己创建的设备
-- 管理员可以管理所有设备
-- 设备可以分配给不同的群组
-
----
-
-## 设备生命周期
-
-### 1. 设备注册
-
-```
-用户创建设备 → 生成安装命令 → Agent 安装 → 设备注册 → 状态更新
-```
-
-### 2. 设备运行
-
-```
-Agent 心跳 → 状态更新 → 命令执行 → 结果上报 → 日志记录
-```
-
-### 3. 设备下线
-
-```
-心跳超时 → 状态标记为离线 → 清理资源 → 可选删除
-```
-
----
-
-## 最佳实践
-
-### 1. 设备命名
-
-- 使用有意义的名称，如 `web-server-01`
-- 包含环境信息，如 `prod-db-master`
-- 避免使用特殊字符
-
-### 2. 设备监控
-
-- 定期检查设备在线状态
-- 监控设备资源使用情况
-- 设置告警阈值
-
-### 3. 设备管理
-
-- 合理使用设备分组
-- 定期清理离线设备
-- 备份重要设备配置
+- 普通用户仅能查看和管理 `owner_id` 为自己（或自己创建的分组）下的设备；
+- 管理员可以跨用户查看与操作所有设备与分组。
 
 ---
 
 ## 相关文档
 
-- [权限控制](./permissions.md) - 用户角色和权限说明
-- [群组管理](./groups.md) - 设备分组管理
-- [命令管理](./commands.md) - 设备命令执行
-- [Agent 接口](../agent/api.md) - Agent 通信接口 
+- [权限与认证机制](./permissions.md)
+- [命令与日志 API](./commands.md)
+- [Agent 通信协议](../../agent/api.md)

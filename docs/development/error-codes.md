@@ -1,397 +1,97 @@
 # 错误码参考
 
-> **最后更新**: 2025-06-20  
-> **文档状态**: 正式发布
+> **契约来源**: [`shared/types.ts`](../../shared/types.ts)、[`server/src/lib/response.ts`](../../server/src/lib/response.ts)
 
 ---
 
-## 错误响应格式
+## 统一响应格式
 
-所有接口响应结构遵循统一格式：
+所有 `/api/*` 与 `/health` 响应均遵循统一信封结构 `ApiEnvelope<T>`：
 
 ```json
 {
   "code": 40001,
-  "message": "用户名或密码错误",
+  "message": "Invalid username or password",
   "data": null
 }
 ```
 
-| 字段      | 类型     | 描述                     |
-| --------- | -------- | ------------------------ |
-| `code`    | int      | 错误编号（统一格式）     |
-| `message` | string   | 中文或英文提示信息       |
-| `data`    | any/null | 附加错误上下文（如字段） |
+| 字段      | 类型     | 描述                              |
+| --------- | -------- | --------------------------------- |
+| `code`    | number   | 业务状态码（成功固定为 `20000`）  |
+| `message` | string   | 人类可读提示信息                  |
+| `data`    | any/null | 成功载荷或 `null`                 |
 
 ---
 
-## 错误码分类
+## 错误码一览
 
 ### 成功响应
 
-| 错误码  | HTTP 状态 | 分类       | 含义说明                       | 建议处理方式                 |
-| ------- | --------- | ---------- | ------------------------------ | ---------------------------- |
-| `20000` | 200       | 通用成功   | 请求成功                       | -                            |
+| 错误码  | 常量名 | HTTP 状态 | 说明                     |
+| ------- | ------ | --------- | ------------------------ |
+| `20000` | `OK`   | 200 / 201 | 请求成功                 |
 
-### 客户端错误 (4xxx)
+### 客户端与权限错误 (`4xxxx`)
 
-#### 用户认证类 (40001-40009)
+| 错误码  | 常量名                  | HTTP 状态 | 触发场景                                                 | 建议处理方式                                  |
+| ------- | ----------------------- | --------- | -------------------------------------------------------- | --------------------------------------------- |
+| `40001` | `INVALID_CREDENTIALS`   | 401       | 登录用户名/密码错误，或修改密码时 `old_password` 不正确  | 提示重新输入凭据                              |
+| `40002` | `FORBIDDEN`             | 403       | 非管理员访问管理员接口、操作他人资源或 Cookie CSRF 校验失败 | 检查用户角色、资源归属或请求 `Origin`/JSON 头 |
+| `40003` | `UNAUTHORIZED`          | 401       | 缺少凭据、Session 过期/无效、API Key 无效                | 清除本地会话并跳转登录，或检查 `X-API-Key`    |
+| `40004` | `VALIDATION_ERROR`      | 400 / 413 | 参数缺失/越界、JSON 格式非法、或单次请求体超过 `1 MiB`   | 按接口字段校验规则修正请求                    |
+| `40005` | `NOT_FOUND`             | 404       | 用户、API Key、分组或 API 路径不存在                     | 确认目标 ID 或路径是否正确                    |
+| `40006` | `CONFLICT`              | 409       | 分组重名、尝试删除自己账号、命令状态不允许当前操作       | 检查目标当前状态后重试                        |
+| `40009` | `USER_EXISTS`           | 409       | 创建用户时用户名已存在                                   | 更换用户名                                    |
+| `40010` | `DEVICE_NOT_FOUND`      | 404       | 设备或 Agent ID 不存在                                   | Agent 收到 `40010` 时会自动清除 `state.json` 并重注册 |
+| `40011` | `DEVICE_OFFLINE`        | 409       | 契约预留：设备处于离线状态                               | 等待设备上线后重试                            |
+| `40013` | `REGISTRATION_DISABLED` | 403       | `CSLITE_ALLOW_REGISTRATION=false` 时拒绝新 Agent 注册    | 启用注册或提前预创建并核对服务端配置          |
+| `40020` | `EXECUTION_NOT_FOUND`   | 404       | 命令、执行记录或结果日志不存在                           | 确认 `command_id` / `execution_id` / `result_id` |
 
-| 错误码  | HTTP 状态 | 分类       | 含义说明                       | 建议处理方式                 |
-| ------- | --------- | ---------- | ------------------------------ | ---------------------------- |
-| `40001` | 401       | 用户认证类 | 用户名或密码错误               | 提示用户重新登录             |
-| `40002` | 403       | 用户权限类 | 权限不足                       | 检查用户角色是否允许该操作   |
-| `40003` | 401       | Token 异常 | 登录状态失效 / Token 过期      | 强制登出，要求重新登录       |
-| `40004` | 400       | 参数错误   | 请求参数无效 / 缺失            | 检查提交数据格式是否正确     |
-| `40005` | 404       | 数据不存在 | 查询 ID 不存在                 | 检查是否为旧 ID 或已删除数据 |
-| `40006` | 409       | 状态冲突   | 当前状态不允许该操作           | 提示用户操作顺序             |
-| `40007` | 429       | 请求过快   | 超出接口限流限制               | 增加重试机制或稍后重试       |
-| `40008` | 400       | 数据验证   | 数据格式或内容不符合要求       | 检查数据格式和业务规则       |
-| `40009` | 409       | 资源冲突   | 资源已存在或名称重复           | 使用其他名称或 ID            |
+### 服务端与调度错误 (`5xxxx` / `6xxxx`)
 
-#### 设备管理类 (40010-40019)
-
-| 错误码  | HTTP 状态 | 分类       | 含义说明                       | 建议处理方式                 |
-| ------- | --------- | ---------- | ------------------------------ | ---------------------------- |
-| `40010` | 404       | 设备不存在 | 设备 ID 不存在或已删除         | 检查设备 ID 是否正确         |
-| `40011` | 409       | 设备离线   | 设备当前离线，无法执行操作     | 等待设备上线后重试           |
-| `40012` | 409       | 设备忙碌   | 设备正在执行其他命令           | 等待当前命令完成后重试       |
-| `40013` | 400       | 设备注册   | Agent 注册失败                 | 检查 Agent 配置和网络连接    |
-| `40014` | 400       | 设备分组   | 设备分组操作失败               | 检查群组 ID 和权限           |
-| `40015` | 409       | 设备重复   | 设备已存在或重复注册           | 使用现有设备或更换设备名称   |
-
-#### 命令管理类 (40020-40029)
-
-| 错误码  | HTTP 状态 | 分类       | 含义说明                       | 建议处理方式                 |
-| ------- | --------- | ---------- | ------------------------------ | ---------------------------- |
-| `40020` | 404       | 命令不存在 | 命令 ID 不存在或已删除         | 检查命令 ID 是否正确         |
-| `40021` | 409       | 命令状态   | 命令状态不允许该操作           | 检查命令当前状态             |
-| `40022` | 400       | 命令格式   | 命令内容格式错误               | 检查命令语法和格式           |
-| `40023` | 400       | 目标无效   | 命令目标设备或群组无效         | 检查目标 ID 和权限           |
-| `40024` | 409       | 命令重复   | 相同命令已存在于队列中         | 避免重复提交相同命令         |
-| `40025` | 400       | 超时设置   | 命令超时时间设置不合理         | 调整超时时间设置             |
-
-#### 群组管理类 (40030-40039)
-
-| 错误码  | HTTP 状态 | 分类       | 含义说明                       | 建议处理方式                 |
-| ------- | --------- | ---------- | ------------------------------ | ---------------------------- |
-| `40030` | 404       | 群组不存在 | 群组 ID 不存在或已删除         | 检查群组 ID 是否正确         |
-| `40031` | 409       | 群组名称   | 群组名称已存在                 | 使用其他群组名称             |
-| `40032` | 400       | 群组权限   | 无权限操作该群组               | 检查用户权限和群组归属       |
-| `40033` | 409       | 群组非空   | 群组内还有设备，无法删除       | 先移除群组内设备             |
-
-### 服务端错误 (5xxx)
-
-#### 系统错误类 (50001-50009)
-
-| 错误码  | HTTP 状态 | 分类       | 含义说明                       | 建议处理方式                 |
-| ------- | --------- | ---------- | ------------------------------ | ---------------------------- |
-| `50001` | 500       | 内部错误   | 系统异常                       | 记录日志并联系维护人员       |
-| `50002` | 502       | 通信失败   | 与 Agent / DB 通信失败         | 检查网络或依赖服务健康状态   |
-| `50003` | 503       | 服务不可用 | 服务暂时不可用                 | 稍后重试或联系管理员         |
-| `50004` | 500       | 数据库错误 | 数据库操作失败                 | 检查数据库连接和状态         |
-| `50005` | 500       | 文件操作   | 文件读写操作失败               | 检查文件权限和磁盘空间       |
-| `50006` | 500       | 配置错误   | 系统配置错误                   | 检查环境变量和配置文件       |
-| `50007` | 500       | 调度错误   | 任务调度器错误                 | 检查任务配置             |
-| `50008` | 500       | 加密错误   | 数据加密/解密失败              | 检查密钥配置                 |
-| `50009` | 500       | 日志错误   | 日志记录失败                   | 检查日志目录权限             |
-
-### 业务错误 (6xxx)
-
-#### 命令调度类 (60001-60009)
-
-| 错误码  | HTTP 状态 | 分类       | 含义说明                       | 建议处理方式                 |
-| ------- | --------- | ---------- | ------------------------------ | ---------------------------- |
-| `60001` | 400       | 命令调度类 | 不支持的命令类型或目标格式错误 | 检查请求内容结构             |
-| `60002` | 400       | 命令重复   | 同内容命令已存在于队列中       | 避免重复提交                 |
-| `60003` | 400       | 执行超时   | 命令执行超时                   | 检查命令复杂度和超时设置     |
-| `60004` | 400       | 执行失败   | 命令执行失败                   | 检查命令内容和目标环境       |
-| `60005` | 400       | 重试失败   | 命令重试次数已达上限           | 检查网络和目标设备状态       |
-| `60006` | 400       | 环境变量   | 环境变量设置错误               | 检查环境变量格式和内容       |
-| `60007` | 400       | 权限不足   | 目标设备执行权限不足           | 检查用户权限和设备权限       |
-| `60008` | 400       | 资源不足   | 目标设备资源不足               | 检查设备资源使用情况         |
+| 错误码  | 常量名           | HTTP 状态 | 触发场景                                               | 建议处理方式                                  |
+| ------- | ---------------- | --------- | ------------------------------------------------------ | --------------------------------------------- |
+| `50001` | `INTERNAL_ERROR` | 500       | 未捕获服务端异常，或 Worker 未绑定 `DB` / Turso 数据库 | 查看服务端日志或检查 `wrangler.toml` / 环境变量 |
+| `60002` | `INVALID_CRON`   | 400       | `cron` 命令缺少 `schedule` 或 5 字段 UTC 表达式非法    | 校验 5 字段 Cron 语法（`分 时 日 月 周`）     |
 
 ---
 
-## 错误处理示例
+## 服务端与前端错误处理示例
 
-### Go 服务端错误处理
+### TypeScript 服务端（Hono）
 
-```go
-// 统一错误响应结构
-type ErrorResponse struct {
-    Code    int         `json:"code"`
-    Message string      `json:"message"`
-    Data    interface{} `json:"data,omitempty"`
-}
+```ts
+import { ErrorCode } from '../../../shared/types';
+import { fail, ok, HttpApiError } from '../lib/response';
 
-// 错误码常量
-const (
-    ErrSuccess           = 20000
-    ErrInvalidCredentials = 40001
-    ErrPermissionDenied  = 40002
-    ErrTokenExpired      = 40003
-    ErrInvalidParams     = 40004
-    ErrNotFound          = 40005
-    ErrStatusConflict    = 40006
-    ErrRateLimit         = 40007
-    ErrValidation        = 40008
-    ErrResourceConflict  = 40009
-    ErrDeviceNotFound    = 40010
-    ErrDeviceOffline     = 40011
-    ErrDeviceBusy        = 40012
-    ErrInternal          = 50001
-    ErrDatabase          = 50004
-    ErrConfig            = 50006
-)
+// 返回业务错误
+return fail(c, ErrorCode.DEVICE_NOT_FOUND, 'Device not found', 404);
 
-// 错误信息映射
-var errorMessages = map[int]string{
-    ErrSuccess:           "请求成功",
-    ErrInvalidCredentials: "用户名或密码错误",
-    ErrPermissionDenied:  "权限不足",
-    ErrTokenExpired:      "登录状态已过期",
-    ErrInvalidParams:     "请求参数无效",
-    ErrNotFound:          "资源不存在",
-    ErrStatusConflict:    "当前状态不允许该操作",
-    ErrRateLimit:         "请求过于频繁",
-    ErrValidation:        "数据验证失败",
-    ErrResourceConflict:  "资源已存在",
-    ErrDeviceNotFound:    "设备不存在",
-    ErrDeviceOffline:     "设备离线",
-    ErrDeviceBusy:        "设备忙碌",
-    ErrInternal:          "系统内部错误",
-    ErrDatabase:          "数据库操作失败",
-    ErrConfig:            "配置错误",
-}
+// 或抛出 HttpApiError 由 app.onError 统一转换
+throw new HttpApiError(ErrorCode.VALIDATION_ERROR, 'Request payload too large', 413);
+```
 
-// 返回错误响应
-func ErrorResponse(c *gin.Context, code int, data interface{}) {
-    message := errorMessages[code]
-    if message == "" {
-        message = "未知错误"
-    }
-    
-    c.JSON(getHTTPStatus(code), ErrorResponse{
-        Code:    code,
-        Message: message,
-        Data:    data,
-    })
-}
+### TypeScript 前端（`web/src/api.ts`）
 
-// 根据错误码获取 HTTP 状态码
-func getHTTPStatus(code int) int {
-    switch {
-    case code >= 20000 && code < 30000:
-        return http.StatusOK
-    case code >= 40001 && code < 40100:
-        return http.StatusBadRequest
-    case code >= 40100 && code < 40200:
-        return http.StatusUnauthorized
-    case code >= 40300 && code < 40400:
-        return http.StatusForbidden
-    case code >= 40400 && code < 40500:
-        return http.StatusNotFound
-    case code >= 40900 && code < 41000:
-        return http.StatusConflict
-    case code >= 42900 && code < 43000:
-        return http.StatusTooManyRequests
-    case code >= 50000:
-        return http.StatusInternalServerError
-    default:
-        return http.StatusInternalServerError
-    }
+```ts
+if (payload.code !== ErrorCode.OK || !res.ok) {
+  if (payload.code === ErrorCode.UNAUTHORIZED || res.status === 401) {
+    // 触发未授权回调，清理状态并跳转 #/login
+  }
+  throw new ApiError(payload.message, payload.code, res.status);
 }
 ```
 
-### 前端错误处理
+### Agent 侧对 `40010` 的自愈行为
 
-```javascript
-// 统一错误处理
-class ErrorHandler {
-    static handle(error) {
-        const { code, message, data } = error;
-        
-        switch (code) {
-            case 40001:
-            case 40003:
-                // 认证错误，跳转到登录页
-                this.redirectToLogin();
-                break;
-                
-            case 40002:
-                // 权限不足，显示提示
-                this.showPermissionError(message);
-                break;
-                
-            case 40007:
-                // 请求过快，显示提示
-                this.showRateLimitError(message);
-                break;
-                
-            case 40011:
-            case 40012:
-                // 设备状态错误，显示提示
-                this.showDeviceStatusError(message);
-                break;
-                
-            case 50001:
-            case 50002:
-                // 系统错误，显示错误页面
-                this.showSystemError(message);
-                break;
-                
-            default:
-                // 其他错误，显示通用提示
-                this.showGenericError(message);
-        }
-    }
-    
-    static redirectToLogin() {
-        // 清除本地存储的认证信息
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        
-        // 跳转到登录页
-        window.location.href = '/login';
-    }
-    
-    static showPermissionError(message) {
-        // 显示权限不足提示
-        this.showNotification('error', '权限不足', message);
-    }
-    
-    static showRateLimitError(message) {
-        // 显示请求过快提示
-        this.showNotification('warning', '请求过快', message);
-    }
-    
-    static showDeviceStatusError(message) {
-        // 显示设备状态错误提示
-        this.showNotification('warning', '设备状态', message);
-    }
-    
-    static showSystemError(message) {
-        // 显示系统错误提示
-        this.showNotification('error', '系统错误', message);
-    }
-    
-    static showGenericError(message) {
-        // 显示通用错误提示
-        this.showNotification('error', '操作失败', message);
-    }
-    
-    static showNotification(type, title, message) {
-        // 使用通知组件显示消息
-        // 这里可以使用 Element UI、Ant Design 等 UI 库的通知组件
-        console.log(`${type}: ${title} - ${message}`);
-    }
-}
-
-// API 请求拦截器
-axios.interceptors.response.use(
-    response => response,
-    error => {
-        if (error.response && error.response.data) {
-            const { code, message } = error.response.data;
-            ErrorHandler.handle({ code, message });
-        }
-        return Promise.reject(error);
-    }
-);
-```
-
----
-
-## 错误日志记录
-
-### 服务端错误日志
-
-```go
-// 错误日志记录
-func logError(code int, message string, err error, context map[string]interface{}) {
-    logEntry := map[string]interface{}{
-        "timestamp": time.Now().Format(time.RFC3339),
-        "code":      code,
-        "message":   message,
-        "error":     err.Error(),
-        "context":   context,
-    }
-    
-    // 记录到日志文件
-    log.Printf("ERROR: %+v", logEntry)
-    
-    // 发送到监控系统（可选）
-    if code >= 50000 {
-        sendToMonitoring(logEntry)
-    }
-}
-
-// 使用示例
-func (c *DeviceController) GetDevice(ctx *gin.Context) {
-    deviceID := ctx.Param("id")
-    
-    device, err := c.deviceService.GetByID(deviceID)
-    if err != nil {
-        logError(40010, "设备不存在", err, map[string]interface{}{
-            "device_id": deviceID,
-            "user_id":   ctx.GetString("user_id"),
-        })
-        ErrorResponse(ctx, 40010, nil)
-        return
-    }
-    
-    ctx.JSON(http.StatusOK, device)
-}
-```
-
----
-
-## 多语言支持
-
-### 错误信息国际化
-
-```go
-// 支持多语言的错误信息
-var errorMessages = map[string]map[int]string{
-    "zh-CN": {
-        ErrInvalidCredentials: "用户名或密码错误",
-        ErrPermissionDenied:   "权限不足",
-        ErrTokenExpired:       "登录状态已过期",
-        // ... 更多中文错误信息
-    },
-    "en-US": {
-        ErrInvalidCredentials: "Invalid username or password",
-        ErrPermissionDenied:   "Permission denied",
-        ErrTokenExpired:       "Login session expired",
-        // ... 更多英文错误信息
-    },
-}
-
-// 根据 Accept-Language 头返回对应语言
-func getErrorMessage(code int, lang string) string {
-    if messages, ok := errorMessages[lang]; ok {
-        if message, ok := messages[code]; ok {
-            return message
-        }
-    }
-    
-    // 默认返回中文
-    if messages, ok := errorMessages["zh-CN"]; ok {
-        if message, ok := messages[code]; ok {
-            return message
-        }
-    }
-    
-    return "未知错误"
-}
-```
+当 `/api/agent/heartbeat` 或 `/api/agent/commands` 返回 `code = 40010`（`DEVICE_NOT_FOUND`，例如设备在控制台被删除）时，Go Agent 与 `cslite-agent-lite.sh` 会自动清理本地 `state.json` 并调用 `POST /api/agent/register` 重新注册。
 
 ---
 
 ## 相关文档
 
-- [项目概览](../architecture/overview.md) - 系统架构和核心概念
-- [环境配置](./environment.md) - 配置错误处理
-- [最佳实践](./best-practices.md) - 错误处理最佳实践
-- [API 文档](../api/auth.md) - 接口错误处理示例 
+- [服务端概览](../server/overview.md)
+- [环境配置](./environment.md)
+- [认证 API](../server/api/auth.md)
+- [Agent 通信协议](../agent/api.md)

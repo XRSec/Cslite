@@ -1,0 +1,47 @@
+app: cslite
+component: scf
+name: ap-nanjing_default_cslite
+stage: prod
+
+inputs:
+  name: cslite
+  namespace: default
+  region: ap-nanjing
+  runtime: Nodejs18.15
+  type: web
+  description: Cslite Control Plane
+  eip: false
+  memorySize: 256
+  timeout: 30
+  initTimeout: 120
+  publicAccess: true
+  events:
+    - http:
+        parameters:
+          authType: NONE
+          netConfig:
+            enableExtranet: true
+            enableIntranet: false
+          qualifier: $DEFAULT
+  src:
+    src: ./dist
+    exclude:
+      - '.env'
+      - '.env.*'
+      - '*.zip'
+  environment:
+    variables:
+      TZ: Asia/Shanghai
+      CSLITE_DB_DRIVER: ${env:CSLITE_DB_DRIVER}
+      MYSQL_HOST: ${env:MYSQL_HOST}
+      MYSQL_PORT: ${env:MYSQL_PORT}
+      MYSQL_USER: ${env:MYSQL_USER}
+      MYSQL_PASSWORD: ${env:MYSQL_PASSWORD}
+      MYSQL_DATABASE: ${env:MYSQL_DATABASE}
+      MYSQL_SSL: ${env:MYSQL_SSL}
+      PUBLIC_BASE_URL: ${env:PUBLIC_BASE_URL}
+      CSLITE_COOKIE_SECURE: ${env:CSLITE_COOKIE_SECURE}
+      CSLITE_ADMIN_USERNAME: ${env:CSLITE_ADMIN_USERNAME}
+      CSLITE_ADMIN_PASSWORD: ${env:CSLITE_ADMIN_PASSWORD}
+      CSLITE_HEARTBEAT_INTERVAL: ${env:CSLITE_HEARTBEAT_INTERVAL}
+      CSLITE_POLL_INTERVAL: ${env:CSLITE_POLL_INTERVAL}

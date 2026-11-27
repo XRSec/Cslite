@@ -1,0 +1,95 @@
+#!/bin/sh /etc/rc.common
+# Cslite Agent OpenWrt procd init service (frpc-style)
+
+START=99
+STOP=10
+USE_PROCD=1
+
+NAME="cslite-agent"
+PROG_FULL="/usr/bin/cslite-agent"
+PROG_LITE="/usr/bin/cslite-agent-lite"
+DEFAULT_CONF="/etc/cslite-agent/config.json"
+
+select_prog() {
+	root="${CSLITE_ROOT_PREFIX:-}"
+	for candidate in \
+		"${root}${PROG_FULL}" \
+		"${root}/etc/cslite-agent/cslite-agent" \
+		"${root}/data/cslite-agent/cslite-agent" \
+		"${root}${PROG_LITE}" \
+		"${root}/etc/cslite-agent/cslite-agent-lite" \
+		"${root}/data/cslite-agent/cslite-agent-lite"; do
+		if [ -x "$candidate" ]; then
+			printf '%s' "$candidate"
+			return 0
+		fi
+	done
+	return 1
+}
+
+start_instance() {
+	local cfg="$1"
+	local prog="$2"
+	local enabled server api_key name device_id poll_interval heartbeat_interval log_level config_file
+
+	config_get_bool enabled "$cfg" 'enabled' 1
+	[ "$enabled" -eq 0 ] && return 0
+
+	config_get server "$cfg" 'server' ''
+	config_get api_key "$cfg" 'api_key' ''
+	config_get name "$cfg" 'name' ''
+	config_get device_id "$cfg" 'device_id' ''
+	config_get poll_interval "$cfg" 'poll_interval' ''
+	config_get heartbeat_interval "$cfg" 'heartbeat_interval' ''
+	config_get log_level "$cfg" 'log_level' ''
+	config_get config_file "$cfg" 'config_file' "$DEFAULT_CONF"
+
+	if [ -z "$server" ] || [ -z "$api_key" ]; then
+		[ -f "$config_file" ] || return 0
+	fi
+
+	procd_open_instance "$cfg"
+	procd_set_param command "$prog" run --config "$config_file"
+	[ -n "$server" ] && procd_append_param command --server "$server"
+	[ -n "$api_key" ] && procd_append_param command --key "$api_key"
+	[ -n "$name" ] && procd_append_param command --name "$name"
+	[ -n "$device_id" ] && procd_append_param command --device-id "$device_id"
+	[ -n "$poll_interval" ] && procd_append_param command --poll "$poll_interval"
+	[ -n "$heartbeat_interval" ] && procd_append_param command --heartbeat "$heartbeat_interval"
+	[ -n "$log_level" ] && procd_append_param command --log-level "$log_level"
+
+	procd_set_param respawn ${respawn_threshold:-3600} ${respawn_timeout:-5} ${respawn_retry:-5}
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	if [ -f "$config_file" ]; then
+		procd_set_param file "$config_file"
+	fi
+	procd_close_instance
+}
+
+start_service() {
+	local prog
+	prog="$(select_prog)" || return 1
+
+	if [ -f "/etc/config/$NAME" ]; then
+		config_load "$NAME"
+		config_foreach start_instance "$NAME" "$prog"
+	elif [ -f "$DEFAULT_CONF" ]; then
+		procd_open_instance
+		procd_set_param command "$prog" run --config "$DEFAULT_CONF"
+		procd_set_param respawn ${respawn_threshold:-3600} ${respawn_timeout:-5} ${respawn_retry:-5}
+		procd_set_param stdout 1
+		procd_set_param stderr 1
+		procd_set_param file "$DEFAULT_CONF"
+		procd_close_instance
+	fi
+}
+
+reload_service() {
+	stop
+	start
+}
+
+service_triggers() {
+	procd_add_reload_trigger "$NAME"
+}

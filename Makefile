@@ -1,61 +1,74 @@
-.PHONY: all build-server build-agent clean test run-server run-agent
+.PHONY: all install build-web typecheck dev dev-worker build-scf deploy-worker build-agent build-agent-all build-openwrt-ipk docker-build test clean
 
-# Variables
-SERVER_BIN=server/cslite-server
-AGENT_BIN=agent/cslite-agent
-GO=go
-GOFLAGS=-v
+NODE ?= node
+NPM ?= npm
+GO ?= go
+WRANGLER ?= wrangler
+TSC := ./node_modules/.bin/tsc
+TSX := ./node_modules/.bin/tsx
+VITEST := ./node_modules/.bin/vitest
 
-all: build-server build-agent
+AGENT_VERSION ?= v1.0.0
+IPK_VERSION := $(patsubst v%,%,$(AGENT_VERSION))
+OPENWRT_ARCH ?= x86_64
+AGENT_BIN ?=
 
-build-server:
-	@echo "Building server..."
-	cd server && $(GO) build $(GOFLAGS) -o cslite-server main.go
+all: build-web typecheck build-agent
+
+install:
+	$(NPM) install
+	cd agent && $(GO) mod download
+
+build-web:
+	$(NODE) web/build.mjs
+
+typecheck:
+	$(TSC) --noEmit
+	$(TSC) -p tsconfig.web.json --noEmit
+
+dev: build-web
+	$(TSX) watch server/src/entry-node.ts
+
+dev-worker: build-web
+	cd server && $(WRANGLER) dev
+
+build-scf: build-web
+	bash deploy/scf/build-scf.sh
+
+deploy-worker: build-web
+	cd server && $(WRANGLER) deploy
 
 build-agent:
-	@echo "Building agent..."
-	cd agent && $(GO) build $(GOFLAGS) -o cslite-agent main.go
+	cd agent && CGO_ENABLED=0 $(GO) build -trimpath -ldflags="-s -w -X main.Version=$(AGENT_VERSION)" -o cslite-agent main.go
 
 build-agent-all:
-	@echo "Building agent for all platforms..."
-	cd agent && GOOS=linux GOARCH=amd64 $(GO) build -o cslite-agent-linux-amd64 main.go
-	cd agent && GOOS=linux GOARCH=arm64 $(GO) build -o cslite-agent-linux-arm64 main.go
-	cd agent && GOOS=darwin GOARCH=amd64 $(GO) build -o cslite-agent-darwin-amd64 main.go
-	cd agent && GOOS=darwin GOARCH=arm64 $(GO) build -o cslite-agent-darwin-arm64 main.go
-	cd agent && GOOS=windows GOARCH=amd64 $(GO) build -o cslite-agent-windows-amd64.exe main.go
+	mkdir -p dist/agent
+	cd agent && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags="-s -w -X main.Version=$(AGENT_VERSION)" -o ../dist/agent/cslite-agent-linux-amd64 main.go
+	cd agent && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build -trimpath -ldflags="-s -w -X main.Version=$(AGENT_VERSION)" -o ../dist/agent/cslite-agent-linux-arm64 main.go
+	cd agent && CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 $(GO) build -trimpath -ldflags="-s -w -X main.Version=$(AGENT_VERSION)" -o ../dist/agent/cslite-agent-linux-armv7 main.go
+	cd agent && CGO_ENABLED=0 GOOS=linux GOARCH=mips GOMIPS=softfloat $(GO) build -trimpath -ldflags="-s -w -X main.Version=$(AGENT_VERSION)" -o ../dist/agent/cslite-agent-linux-mips main.go
+	cd agent && CGO_ENABLED=0 GOOS=linux GOARCH=mipsle GOMIPS=softfloat $(GO) build -trimpath -ldflags="-s -w -X main.Version=$(AGENT_VERSION)" -o ../dist/agent/cslite-agent-linux-mipsle main.go
+	cd agent && CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 $(GO) build -trimpath -ldflags="-s -w -X main.Version=$(AGENT_VERSION)" -o ../dist/agent/cslite-agent-darwin-amd64 main.go
+	cd agent && CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 $(GO) build -trimpath -ldflags="-s -w -X main.Version=$(AGENT_VERSION)" -o ../dist/agent/cslite-agent-darwin-arm64 main.go
+	cd agent && CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GO) build -trimpath -ldflags="-s -w -X main.Version=$(AGENT_VERSION)" -o ../dist/agent/cslite-agent-windows-amd64.exe main.go
+	cd agent && CGO_ENABLED=0 GOOS=windows GOARCH=arm64 $(GO) build -trimpath -ldflags="-s -w -X main.Version=$(AGENT_VERSION)" -o ../dist/agent/cslite-agent-windows-arm64.exe main.go
 
-clean:
-	@echo "Cleaning..."
-	rm -f $(SERVER_BIN) $(AGENT_BIN)
-	rm -f agent/cslite-agent-*
-
-test:
-	@echo "Running tests..."
-	cd server && $(GO) test ./...
-	cd agent && $(GO) test ./...
-
-run-server: build-server
-	@echo "Running server..."
-	cd server && ./cslite-server
-
-run-server-dev:
-	@echo "Running server..."
-	cd server && go run main.go
-
-run-server-node:
-	@echo "Running server..."
-	cd server && node dev-server.js
-
-run-agent: build-agent
-	@echo "Running agent..."
-	cd agent && ./cslite-agent
+build-openwrt-ipk:
+	mkdir -p dist/openwrt
+	sh agent/openwrt/build-ipk.sh --lite --version "$(IPK_VERSION)" --out "dist/openwrt/cslite-agent-lite_$(IPK_VERSION)_all.ipk"
+	@if [ -n "$(AGENT_BIN)" ]; then \
+		sh agent/openwrt/build-ipk.sh --full --arch "$(OPENWRT_ARCH)" --bin "$(AGENT_BIN)" --version "$(IPK_VERSION)" --out "dist/openwrt/cslite-agent_$(IPK_VERSION)_$(OPENWRT_ARCH).ipk"; \
+	fi
 
 docker-build:
-	@echo "Building Docker images..."
-	docker build -t cslite/server:latest -f docker/Dockerfile.server .
-	docker build -t cslite/agent:latest -f docker/Dockerfile.agent .
+	docker build -t cslite:latest -f deploy/docker/Dockerfile .
 
-install-deps:
-	@echo "Installing dependencies..."
-	cd server && $(GO) mod download
-	cd agent && $(GO) mod download
+test:
+	$(NODE) web/build.mjs
+	$(TSC) --noEmit
+	$(TSC) -p tsconfig.web.json --noEmit
+	$(VITEST) run
+	cd agent && $(GO) vet ./... && $(GO) test -race ./...
+
+clean:
+	rm -rf agent/cslite-agent* dist web/dist deploy/scf/dist server/.wrangler

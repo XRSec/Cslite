@@ -1,0 +1,84 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version tag (defaults to v1.0.0)"
+        required: false
+        default: "v1.0.0"
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Publish Release Assets
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
+
+      - name: Resolve release version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            RAW_VERSION="${{ github.ref_name }}"
+          else
+            RAW_VERSION="${{ inputs.version }}"
+            [ -n "$RAW_VERSION" ] || RAW_VERSION="v1.0.0"
+          fi
+          case "$RAW_VERSION" in
+            v*) VERSION="$RAW_VERSION" ;;
+            *) VERSION="v${RAW_VERSION}" ;;
+          esac
+          IPK_VERSION="${VERSION#v}"
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "IPK_VERSION=${IPK_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Run agent tests
+        working-directory: agent
+        run: |
+          go vet ./...
+          go test -race -count=1 ./...
+
+      - name: Build Go agent binaries
+        shell: bash
+        run: |
+          mkdir -p dist/release
+          LDFLAGS="-s -w -X main.Version=${VERSION}"
+          cd agent
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="$LDFLAGS" -o ../dist/release/cslite-agent-linux-amd64 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="$LDFLAGS" -o ../dist/release/cslite-agent-linux-arm64 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -ldflags="$LDFLAGS" -o ../dist/release/cslite-agent-linux-armv7 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=mips GOMIPS=softfloat go build -trimpath -ldflags="$LDFLAGS" -o ../dist/release/cslite-agent-linux-mips .
+          CGO_ENABLED=0 GOOS=linux GOARCH=mipsle GOMIPS=softfloat go build -trimpath -ldflags="$LDFLAGS" -o ../dist/release/cslite-agent-linux-mipsle .
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags="$LDFLAGS" -o ../dist/release/cslite-agent-darwin-amd64 .
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags="$LDFLAGS" -o ../dist/release/cslite-agent-darwin-arm64 .
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="$LDFLAGS" -o ../dist/release/cslite-agent-windows-amd64.exe .
+          CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -trimpath -ldflags="$LDFLAGS" -o ../dist/release/cslite-agent-windows-arm64.exe .
+
+      - name: Build OpenWrt lite package and checksums
+        shell: bash
+        run: |
+          sh agent/openwrt/build-ipk.sh --lite --version "${IPK_VERSION}" --out "dist/release/cslite-agent-lite_${IPK_VERSION}_all.ipk"
+          (cd dist/release && sha256sum cslite-agent-* > SHA256SUMS.txt)
+          ls -lh dist/release
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.VERSION }}
+          name: Cslite ${{ env.VERSION }}
+          generate_release_notes: true
+          files: dist/release/*
