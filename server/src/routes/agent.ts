@@ -8,10 +8,14 @@ import {
   type AgentResultRequest,
   type CommandTask,
   type CommandType,
+  type DeviceMetrics,
 } from '../../../shared/types';
+import type { AppConfig } from '../config';
 import type { SqlDriver, SqlStatement } from '../db/driver';
+import { maybeRunScheduledCleanup } from '../lib/cleanup';
 import { nextCronAfter } from '../lib/cron';
 import { generateId } from '../lib/crypto';
+import { loadDeviceGroupIdsMap, uniqueStrings } from '../lib/device-groups';
 import {
   reapTimedOutExecutions,
   reconcileExecutionAndCommand,
@@ -26,7 +30,9 @@ import {
   readJsonBody,
   truncateUtf8Bytes,
 } from '../lib/response';
-import { authenticateApiKey, type AppEnv } from '../middleware/auth';
+import { resolveEffectiveTimeZone } from '../lib/timezone';
+import { authenticateApiKeyWithScope, type AppEnv } from '../middleware/auth';
+import { getOnlineThresholdMs, isDeviceOnline } from './devices';
 
 interface AgentDeviceRow {
   agent_id: string;
@@ -34,6 +40,7 @@ interface AgentDeviceRow {
   owner_id: number;
   device_status: string;
   device_last_seen: string;
+  last_heartbeat: string | null;
   group_id: string | null;
   ip_address: string;
   agent_version: string;
@@ -102,31 +109,43 @@ async function resolveCommandTargetDeviceIds(
       "SELECT target_id FROM command_targets WHERE command_id = ? AND target_type = 'devices'",
       [commandId],
     );
-    return rows.map((r) => r.target_id);
+    return uniqueStrings(rows.map((r) => r.target_id));
   }
   const rows = await driver.all<{ id: string }>(
-    "SELECT d.id FROM devices d INNER JOIN command_targets ct ON ct.target_id = d.group_id WHERE ct.command_id = ? AND ct.target_type = 'groups'",
+    "SELECT DISTINCT d.id FROM devices d INNER JOIN command_targets ct ON ct.target_type = 'groups' LEFT JOIN device_groups dg ON dg.device_id = d.id AND dg.group_id = ct.target_id WHERE ct.command_id = ? AND (dg.group_id IS NOT NULL OR d.group_id = ct.target_id)",
     [commandId],
   );
-  return rows.map((r) => r.id);
+  return uniqueStrings(rows.map((r) => r.id));
 }
 
 async function materializeDueScheduledForDevice(
   driver: SqlDriver,
+  config: AppConfig,
   deviceId: string,
-  groupId: string | null,
+  fallbackGroupId: string | null,
   now: Date,
   nowIso: string,
 ): Promise<void> {
-  const dueCommands = groupId
-    ? await driver.all<DueScheduledCommandRow>(
-        "SELECT DISTINCT c.id, c.type, c.schedule, c.target_type, c.next_run_at FROM commands c INNER JOIN command_targets ct ON ct.command_id = c.id WHERE ((c.type = 'cron' AND c.status IN ('pending', 'running')) OR (c.type = 'once' AND c.status = 'pending')) AND c.next_run_at IS NOT NULL AND c.next_run_at <= ? AND ((ct.target_type = 'devices' AND ct.target_id = ?) OR (ct.target_type = 'groups' AND ct.target_id = ?)) ORDER BY c.next_run_at ASC LIMIT 10",
-        [nowIso, deviceId, groupId],
-      )
-    : await driver.all<DueScheduledCommandRow>(
-        "SELECT DISTINCT c.id, c.type, c.schedule, c.target_type, c.next_run_at FROM commands c INNER JOIN command_targets ct ON ct.command_id = c.id WHERE ((c.type = 'cron' AND c.status IN ('pending', 'running')) OR (c.type = 'once' AND c.status = 'pending')) AND c.next_run_at IS NOT NULL AND c.next_run_at <= ? AND ct.target_type = 'devices' AND ct.target_id = ? ORDER BY c.next_run_at ASC LIMIT 10",
-        [nowIso, deviceId],
-      );
+  const groupMap = await loadDeviceGroupIdsMap(driver, [deviceId]);
+  const groupIds = uniqueStrings([...(groupMap.get(deviceId) ?? []), fallbackGroupId]);
+
+  const dueCommands =
+    groupIds.length > 0
+      ? await driver.all<DueScheduledCommandRow>(
+          `SELECT DISTINCT c.id, c.type, c.schedule, c.target_type, c.next_run_at FROM commands c INNER JOIN command_targets ct ON ct.command_id = c.id WHERE ((c.type = 'cron' AND c.status IN ('pending', 'running')) OR (c.type = 'once' AND c.status = 'pending')) AND c.next_run_at IS NOT NULL AND c.next_run_at <= ? AND ((ct.target_type = 'devices' AND ct.target_id = ?) OR (ct.target_type = 'groups' AND ct.target_id IN (${groupIds.map(() => '?').join(', ')}))) ORDER BY c.next_run_at ASC LIMIT 10`,
+          [nowIso, deviceId, ...groupIds],
+        )
+      : await driver.all<DueScheduledCommandRow>(
+          "SELECT DISTINCT c.id, c.type, c.schedule, c.target_type, c.next_run_at FROM commands c INNER JOIN command_targets ct ON ct.command_id = c.id WHERE ((c.type = 'cron' AND c.status IN ('pending', 'running')) OR (c.type = 'once' AND c.status = 'pending')) AND c.next_run_at IS NOT NULL AND c.next_run_at <= ? AND ct.target_type = 'devices' AND ct.target_id = ? ORDER BY c.next_run_at ASC LIMIT 10",
+          [nowIso, deviceId],
+        );
+
+  if (dueCommands.length === 0) return;
+
+  let effectiveTimeZone = 'UTC';
+  if (dueCommands.some((cmd) => cmd.type === 'cron')) {
+    effectiveTimeZone = (await resolveEffectiveTimeZone(driver, config)).timezone;
+  }
 
   for (const cmd of dueCommands) {
     const scheduledFor = cmd.next_run_at;
@@ -151,7 +170,7 @@ async function materializeDueScheduledForDevice(
     }
 
     if (cmd.type === 'cron') {
-      const nextRun = nextCronAfter(cmd.schedule, now);
+      const nextRun = nextCronAfter(cmd.schedule, now, effectiveTimeZone);
       stmts.push({
         sql: 'UPDATE commands SET next_run_at = ?, updated_at = ? WHERE id = ? AND next_run_at = ?',
         params: [nextRun, nowIso, cmd.id, scheduledFor],
@@ -188,6 +207,38 @@ function hasPollTelemetry(telemetry?: PollTelemetry): boolean {
   );
 }
 
+function summarizeMetrics(metricsObj: DeviceMetrics | null): string {
+  if (!metricsObj) return '';
+  const parts: string[] = [];
+  if (typeof metricsObj.cpu_usage === 'number' && Number.isFinite(metricsObj.cpu_usage)) {
+    parts.push(`CPU ${metricsObj.cpu_usage.toFixed(1)}%`);
+  }
+  if (typeof metricsObj.memory_percent === 'number' && Number.isFinite(metricsObj.memory_percent)) {
+    parts.push(`Mem ${metricsObj.memory_percent.toFixed(1)}%`);
+  } else if (typeof metricsObj.memory_used === 'number' && Number.isFinite(metricsObj.memory_used)) {
+    const memSummary =
+      typeof metricsObj.memory_total === 'number' && metricsObj.memory_total > 0
+        ? `Mem ${metricsObj.memory_used}/${metricsObj.memory_total}`
+        : `Mem ${metricsObj.memory_used}`;
+    parts.push(memSummary);
+  }
+  if (typeof metricsObj.disk_usage === 'number' && Number.isFinite(metricsObj.disk_usage)) {
+    parts.push(`Disk ${metricsObj.disk_usage.toFixed(1)}%`);
+  }
+  if (typeof metricsObj.load_avg === 'string' && metricsObj.load_avg.trim()) {
+    parts.push(`Load ${metricsObj.load_avg.trim()}`);
+  }
+  if (
+    typeof metricsObj.network_in === 'number' &&
+    Number.isFinite(metricsObj.network_in) &&
+    typeof metricsObj.network_out === 'number' &&
+    Number.isFinite(metricsObj.network_out)
+  ) {
+    parts.push(`Net ↓${Math.round(metricsObj.network_in)} ↑${Math.round(metricsObj.network_out)} KB/s`);
+  }
+  return parts.join(', ');
+}
+
 async function persistAgentTelemetry(
   c: Context<AppEnv>,
   driver: SqlDriver,
@@ -210,10 +261,16 @@ async function persistAgentTelemetry(
     typeof telemetry.hostname === 'string' && telemetry.hostname.trim()
       ? telemetry.hostname.trim().slice(0, 191)
       : row.hostname;
-  const nextMetricsJson =
+  const metricsObj =
     telemetry.metrics && typeof telemetry.metrics === 'object' && !Array.isArray(telemetry.metrics)
-      ? JSON.stringify(telemetry.metrics)
-      : row.metrics_json;
+      ? telemetry.metrics
+      : null;
+  const nextMetricsJson = metricsObj ? JSON.stringify(metricsObj) : row.metrics_json;
+  const config = c.get('config');
+  const nowMs = Date.parse(nowIso) || Date.now();
+  const recoveredFromOffline =
+    Boolean(row.device_last_seen) &&
+    !isDeviceOnline(row.device_last_seen, nowMs, getOnlineThresholdMs(config));
 
   await driver.batch([
     {
@@ -234,6 +291,38 @@ async function persistAgentTelemetry(
       params: [nowIso, nextMetricsJson, nextVersion, nowIso, row.agent_id],
     },
   ]);
+
+  const metricSummary = summarizeMetrics(metricsObj);
+  if (recoveredFromOffline) {
+    await writeDeviceLog(
+      driver,
+      row.device_id,
+      'health_online',
+      `Device recovered online after offline period${metricSummary ? ` (${metricSummary})` : ''}`,
+      {
+        previous_last_seen: row.device_last_seen,
+        ip_address: nextIp,
+        agent_version: nextVersion,
+        ...(metricsObj ? { metrics: metricsObj } : {}),
+      },
+      nowIso,
+    );
+  } else if (metricsObj) {
+    const prevHbMs = row.last_heartbeat ? Date.parse(row.last_heartbeat) : 0;
+    const minGapMs = Math.max(30_000, Math.floor(config.heartbeatInterval * 0.75) * 1000);
+    const shouldLogHeartbeat =
+      !row.metrics_json || !Number.isFinite(prevHbMs) || prevHbMs <= 0 || nowMs - prevHbMs >= minGapMs;
+    if (shouldLogHeartbeat) {
+      await writeDeviceLog(
+        driver,
+        row.device_id,
+        'heartbeat',
+        metricSummary ? `Heartbeat OK (${metricSummary})` : 'Heartbeat OK',
+        { ip_address: nextIp, agent_version: nextVersion, metrics: metricsObj },
+        nowIso,
+      );
+    }
+  }
 }
 
 async function handlePollCommands(
@@ -249,10 +338,11 @@ async function handlePollCommands(
   const nowMs = now.getTime();
   const nowIso = now.toISOString();
 
-  const keyUser = await authenticateApiKey(driver, rawApiKey, nowIso);
-  if (!keyUser) {
+  const keyAuth = await authenticateApiKeyWithScope(driver, rawApiKey, nowIso);
+  if (!keyAuth) {
     return fail(c, ErrorCode.UNAUTHORIZED, 'Invalid API key', 401);
   }
+  const keyUser = keyAuth.user;
 
   if (!agentId) {
     return fail(c, ErrorCode.VALIDATION_ERROR, 'agent_id is required', 400);
@@ -267,11 +357,14 @@ async function handlePollCommands(
   const limit = Number.isFinite(limitNum) ? Math.max(1, Math.min(20, Math.floor(limitNum))) : 5;
 
   const agentRow = await driver.get<AgentDeviceRow>(
-    'SELECT a.id AS agent_id, a.device_id, d.owner_id, d.status AS device_status, d.last_seen AS device_last_seen, d.group_id, d.ip_address, d.agent_version, d.metrics_json, d.os_version, d.hostname FROM agents a INNER JOIN devices d ON d.id = a.device_id WHERE a.id = ? LIMIT 1',
+    'SELECT a.id AS agent_id, a.device_id, d.owner_id, d.status AS device_status, d.last_seen AS device_last_seen, a.last_heartbeat, d.group_id, d.ip_address, d.agent_version, d.metrics_json, d.os_version, d.hostname FROM agents a INNER JOIN devices d ON d.id = a.device_id WHERE a.id = ? LIMIT 1',
     [agentId],
   );
   if (!agentRow) {
     return fail(c, ErrorCode.DEVICE_NOT_FOUND, 'Agent or device not found', 404);
+  }
+  if (keyAuth.boundDeviceId && agentRow.device_id !== keyAuth.boundDeviceId) {
+    return fail(c, ErrorCode.FORBIDDEN, 'API key is bound to a different device', 403);
   }
   if (Number(agentRow.owner_id) !== keyUser.id && keyUser.role !== UserRole.ADMIN) {
     return fail(c, ErrorCode.FORBIDDEN, 'Forbidden', 403);
@@ -281,7 +374,14 @@ async function handlePollCommands(
   await reapTimedOutExecutions(driver, nowIso);
 
   // 2. Lazy cron & scheduled once materialization
-  await materializeDueScheduledForDevice(driver, agentRow.device_id, agentRow.group_id, now, nowIso);
+  await materializeDueScheduledForDevice(
+    driver,
+    config,
+    agentRow.device_id,
+    agentRow.group_id,
+    now,
+    nowIso,
+  );
 
   // 3. Atomic claim of up to `limit` queued results for this device
   const candidates = await driver.all<QueuedTaskRow>(
@@ -349,6 +449,8 @@ async function handlePollCommands(
     }
   }
 
+  await maybeRunScheduledCleanup(driver, config, now);
+
   return ok(c, {
     commands: tasks,
     poll_interval: config.pollInterval,
@@ -366,10 +468,11 @@ export function createAgentRoutes(): Hono<AppEnv> {
     const nowIso = new Date().toISOString();
 
     const rawApiKey = extractApiKey(c, body.api_key);
-    const keyUser = await authenticateApiKey(driver, rawApiKey, nowIso);
-    if (!keyUser) {
+    const keyAuth = await authenticateApiKeyWithScope(driver, rawApiKey, nowIso);
+    if (!keyAuth) {
       return fail(c, ErrorCode.UNAUTHORIZED, 'Invalid API key', 401);
     }
+    const keyUser = keyAuth.user;
 
     if (!config.allowRegistration) {
       return fail(c, ErrorCode.REGISTRATION_DISABLED, 'Agent registration is disabled', 403);
@@ -382,8 +485,15 @@ export function createAgentRoutes(): Hono<AppEnv> {
     const osVersion =
       typeof body.os_version === 'string' ? body.os_version.trim().slice(0, 191) : '';
     const hostname = typeof body.hostname === 'string' ? body.hostname.trim().slice(0, 191) : '';
-    const requestedDeviceId =
+    let requestedDeviceId =
       typeof body.device_id === 'string' ? body.device_id.trim() : '';
+
+    if (keyAuth.boundDeviceId) {
+      if (requestedDeviceId && requestedDeviceId !== keyAuth.boundDeviceId) {
+        return fail(c, ErrorCode.FORBIDDEN, 'API key is bound to a different device', 403);
+      }
+      requestedDeviceId = keyAuth.boundDeviceId;
+    }
 
     if (name.length > 100 || !platform || !version || (!requestedDeviceId && !name)) {
       return fail(
@@ -532,10 +642,11 @@ export function createAgentRoutes(): Hono<AppEnv> {
     const nowIso = new Date().toISOString();
 
     const rawApiKey = extractApiKey(c, body.api_key);
-    const keyUser = await authenticateApiKey(driver, rawApiKey, nowIso);
-    if (!keyUser) {
+    const keyAuth = await authenticateApiKeyWithScope(driver, rawApiKey, nowIso);
+    if (!keyAuth) {
       return fail(c, ErrorCode.UNAUTHORIZED, 'Invalid API key', 401);
     }
+    const keyUser = keyAuth.user;
 
     const agentId = typeof body.agent_id === 'string' ? body.agent_id.trim() : '';
     if (!agentId) {
@@ -543,11 +654,20 @@ export function createAgentRoutes(): Hono<AppEnv> {
     }
 
     const row = await driver.get<AgentDeviceRow>(
-      'SELECT a.id AS agent_id, a.device_id, d.owner_id, d.status AS device_status, d.last_seen AS device_last_seen, d.group_id, d.ip_address, d.agent_version, d.metrics_json, d.os_version, d.hostname FROM agents a INNER JOIN devices d ON d.id = a.device_id WHERE a.id = ? LIMIT 1',
+      'SELECT a.id AS agent_id, a.device_id, d.owner_id, d.status AS device_status, d.last_seen AS device_last_seen, a.last_heartbeat, d.group_id, d.ip_address, d.agent_version, d.metrics_json, d.os_version, d.hostname FROM agents a INNER JOIN devices d ON d.id = a.device_id WHERE a.id = ? LIMIT 1',
       [agentId],
     );
     if (!row) {
       return fail(c, ErrorCode.DEVICE_NOT_FOUND, 'Agent or device not found', 404);
+    }
+    if (
+      keyAuth.boundDeviceId &&
+      (row.device_id !== keyAuth.boundDeviceId ||
+        (typeof body.device_id === 'string' &&
+          body.device_id.trim() &&
+          body.device_id.trim() !== keyAuth.boundDeviceId))
+    ) {
+      return fail(c, ErrorCode.FORBIDDEN, 'API key is bound to a different device', 403);
     }
     if (Number(row.owner_id) !== keyUser.id && keyUser.role !== UserRole.ADMIN) {
       return fail(c, ErrorCode.FORBIDDEN, 'Forbidden', 403);
@@ -596,10 +716,11 @@ export function createAgentRoutes(): Hono<AppEnv> {
     const nowIso = new Date().toISOString();
 
     const rawApiKey = extractApiKey(c, body.api_key);
-    const keyUser = await authenticateApiKey(driver, rawApiKey, nowIso);
-    if (!keyUser) {
+    const keyAuth = await authenticateApiKeyWithScope(driver, rawApiKey, nowIso);
+    if (!keyAuth) {
       return fail(c, ErrorCode.UNAUTHORIZED, 'Invalid API key', 401);
     }
+    const keyUser = keyAuth.user;
 
     const executionId = typeof body.execution_id === 'string' ? body.execution_id.trim() : '';
     const deviceId = typeof body.device_id === 'string' ? body.device_id.trim() : '';
@@ -629,6 +750,9 @@ export function createAgentRoutes(): Hono<AppEnv> {
     );
     if (!device) {
       return fail(c, ErrorCode.DEVICE_NOT_FOUND, 'Device not found', 404);
+    }
+    if (keyAuth.boundDeviceId && device.id !== keyAuth.boundDeviceId) {
+      return fail(c, ErrorCode.FORBIDDEN, 'API key is bound to a different device', 403);
     }
     if (Number(device.owner_id) !== keyUser.id && keyUser.role !== UserRole.ADMIN) {
       return fail(c, ErrorCode.FORBIDDEN, 'Forbidden', 403);

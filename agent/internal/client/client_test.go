@@ -253,3 +253,48 @@ func TestPollCommandsWithStatus(t *testing.T) {
 		t.Fatalf("unexpected telemetry metadata: %v", seen[1])
 	}
 }
+
+func TestDefaultAndOverrideHeaders(t *testing.T) {
+	var gotUA, gotRef string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUA = r.Header.Get("User-Agent")
+		gotRef = r.Header.Get("Referer")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    protocol.CodeOK,
+			"message": "ok",
+			"data":    map[string]any{"status": "ok"},
+		})
+	}))
+	defer srv.Close()
+
+	defClient, err := New(srv.URL, "ak_live_hdr")
+	if err != nil {
+		t.Fatalf("New(default) failed: %v", err)
+	}
+	if _, err := defClient.Heartbeat(context.Background(), protocol.HeartbeatRequest{AgentID: "ag_hdr"}); err != nil {
+		t.Fatalf("Heartbeat(default) failed: %v", err)
+	}
+	if gotUA != "CSLite-Agent/1.0" {
+		t.Fatalf("default User-Agent = %q, want %q", gotUA, "CSLite-Agent/1.0")
+	}
+	if gotRef != srv.URL+"/agent/telemetry" {
+		t.Fatalf("default Referer = %q, want %q", gotRef, srv.URL+"/agent/telemetry")
+	}
+
+	customClient, err := New(srv.URL+"/api", "ak_live_hdr", Options{
+		UserAgent: "CSLite-Agent/v1.1.0",
+		Referer:   "https://ctrl.example.com/custom-ref",
+	})
+	if err != nil {
+		t.Fatalf("New(custom) failed: %v", err)
+	}
+	if _, err := customClient.Heartbeat(context.Background(), protocol.HeartbeatRequest{AgentID: "ag_hdr"}); err != nil {
+		t.Fatalf("Heartbeat(custom) failed: %v", err)
+	}
+	if gotUA != "CSLite-Agent/v1.1.0" {
+		t.Fatalf("custom User-Agent = %q, want %q", gotUA, "CSLite-Agent/v1.1.0")
+	}
+	if gotRef != "https://ctrl.example.com/custom-ref" {
+		t.Fatalf("custom Referer = %q, want %q", gotRef, "https://ctrl.example.com/custom-ref")
+	}
+}

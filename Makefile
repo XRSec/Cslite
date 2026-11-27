@@ -39,19 +39,19 @@ deploy-worker: build-web
 	cd server && $(WRANGLER) deploy
 
 build-agent:
-	cd agent && CGO_ENABLED=0 $(GO) build -trimpath -ldflags="-s -w -X main.Version=$(AGENT_VERSION)" -o cslite-agent main.go
+	cd agent && CGO_ENABLED=0 $(GO) build -tags nethttpomithttp2 -trimpath -ldflags="-s -w -X main.Version=$(AGENT_VERSION)" -o cslite-agent main.go
 
 build-agent-all:
 	mkdir -p dist/agent
-	cd agent && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags="-s -w -X main.Version=$(AGENT_VERSION)" -o ../dist/agent/cslite-agent-linux-amd64 main.go
-	cd agent && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build -trimpath -ldflags="-s -w -X main.Version=$(AGENT_VERSION)" -o ../dist/agent/cslite-agent-linux-arm64 main.go
-	cd agent && CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 $(GO) build -trimpath -ldflags="-s -w -X main.Version=$(AGENT_VERSION)" -o ../dist/agent/cslite-agent-linux-armv7 main.go
-	cd agent && CGO_ENABLED=0 GOOS=linux GOARCH=mips GOMIPS=softfloat $(GO) build -trimpath -ldflags="-s -w -X main.Version=$(AGENT_VERSION)" -o ../dist/agent/cslite-agent-linux-mips main.go
-	cd agent && CGO_ENABLED=0 GOOS=linux GOARCH=mipsle GOMIPS=softfloat $(GO) build -trimpath -ldflags="-s -w -X main.Version=$(AGENT_VERSION)" -o ../dist/agent/cslite-agent-linux-mipsle main.go
-	cd agent && CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 $(GO) build -trimpath -ldflags="-s -w -X main.Version=$(AGENT_VERSION)" -o ../dist/agent/cslite-agent-darwin-amd64 main.go
-	cd agent && CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 $(GO) build -trimpath -ldflags="-s -w -X main.Version=$(AGENT_VERSION)" -o ../dist/agent/cslite-agent-darwin-arm64 main.go
-	cd agent && CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GO) build -trimpath -ldflags="-s -w -X main.Version=$(AGENT_VERSION)" -o ../dist/agent/cslite-agent-windows-amd64.exe main.go
-	cd agent && CGO_ENABLED=0 GOOS=windows GOARCH=arm64 $(GO) build -trimpath -ldflags="-s -w -X main.Version=$(AGENT_VERSION)" -o ../dist/agent/cslite-agent-windows-arm64.exe main.go
+	cd agent && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -tags nethttpomithttp2 -trimpath -ldflags="-s -w -X main.Version=$(AGENT_VERSION)" -o ../dist/agent/cslite-agent-linux-amd64 main.go
+	cd agent && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build -tags nethttpomithttp2 -trimpath -ldflags="-s -w -X main.Version=$(AGENT_VERSION)" -o ../dist/agent/cslite-agent-linux-arm64 main.go
+	cd agent && CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 $(GO) build -tags nethttpomithttp2 -trimpath -ldflags="-s -w -X main.Version=$(AGENT_VERSION)" -o ../dist/agent/cslite-agent-linux-armv7 main.go
+	cd agent && CGO_ENABLED=0 GOOS=linux GOARCH=mips GOMIPS=softfloat $(GO) build -tags nethttpomithttp2 -trimpath -ldflags="-s -w -X main.Version=$(AGENT_VERSION)" -o ../dist/agent/cslite-agent-linux-mips main.go
+	cd agent && CGO_ENABLED=0 GOOS=linux GOARCH=mipsle GOMIPS=softfloat $(GO) build -tags nethttpomithttp2 -trimpath -ldflags="-s -w -X main.Version=$(AGENT_VERSION)" -o ../dist/agent/cslite-agent-linux-mipsle main.go
+	cd agent && CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 $(GO) build -tags nethttpomithttp2 -trimpath -ldflags="-s -w -X main.Version=$(AGENT_VERSION)" -o ../dist/agent/cslite-agent-darwin-amd64 main.go
+	cd agent && CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 $(GO) build -tags nethttpomithttp2 -trimpath -ldflags="-s -w -X main.Version=$(AGENT_VERSION)" -o ../dist/agent/cslite-agent-darwin-arm64 main.go
+	cd agent && CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GO) build -tags nethttpomithttp2 -trimpath -ldflags="-s -w -X main.Version=$(AGENT_VERSION)" -o ../dist/agent/cslite-agent-windows-amd64.exe main.go
+	cd agent && CGO_ENABLED=0 GOOS=windows GOARCH=arm64 $(GO) build -tags nethttpomithttp2 -trimpath -ldflags="-s -w -X main.Version=$(AGENT_VERSION)" -o ../dist/agent/cslite-agent-windows-arm64.exe main.go
 
 build-openwrt-ipk:
 	mkdir -p dist/openwrt

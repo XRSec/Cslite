@@ -105,4 +105,20 @@ func TestDotEnvFallbackAndSetKey(t *testing.T) {
 	if loaded.Server != "https://updated.example.com" || loaded.PollInterval != 10 {
 		t.Fatalf("unexpected loaded config: %+v", loaded)
 	}
+
+	t.Setenv("CSLITE_USER_AGENT", "EnvUA/1.0")
+	t.Setenv("CSLITE_REFERER", "https://env.example/ref")
+	if _, err := SetKey(jsonPath, "user_agent", "FileUA/1.0"); err != nil {
+		t.Fatalf("SetKey(user_agent) failed: %v", err)
+	}
+	if _, err := SetKey(jsonPath, "referer", "https://file.example/ref"); err != nil {
+		t.Fatalf("SetKey(referer) failed: %v", err)
+	}
+	hdrCfg, err := Load(Overrides{ConfigFile: jsonPath, UserAgent: "CliUA/2.0"})
+	if err != nil {
+		t.Fatalf("Load(hdr) failed: %v", err)
+	}
+	if hdrCfg.UserAgent != "CliUA/2.0" || hdrCfg.Referer != "https://env.example/ref" {
+		t.Fatalf("unexpected header precedence: ua=%q ref=%q", hdrCfg.UserAgent, hdrCfg.Referer)
+	}
 }

@@ -1,7 +1,9 @@
 package metrics
 
 import (
+	"fmt"
 	"math"
+	"net"
 	"testing"
 )
 
@@ -85,5 +87,40 @@ func TestParseLoadavgUptimeAndRelease(t *testing.T) {
 	owrt := "DISTRIB_ID='OpenWrt'\nDISTRIB_RELEASE='23.05.3'\nDISTRIB_DESCRIPTION='OpenWrt 23.05.3 r23809'\n"
 	if got := ParseKeyValueRelease(owrt, "DISTRIB_DESCRIPTION", "DISTRIB_RELEASE"); got != "OpenWrt 23.05.3 r23809" {
 		t.Fatalf("ParseKeyValueRelease = %q", got)
+	}
+}
+
+func TestFilterAndSortIPs(t *testing.T) {
+	raw := []net.IP{
+		net.ParseIP("127.0.0.1"),
+		net.ParseIP("::1"),
+		net.ParseIP("fe80::1"),
+		net.ParseIP("169.254.1.10"),
+		net.ParseIP("fd00::2"),
+		net.ParseIP("2402:4e00:c032::1"),
+		net.ParseIP("10.0.0.5"),
+		net.ParseIP("8.8.8.8"),
+		net.ParseIP("8.8.8.8"), // duplicate
+		net.ParseIP("0.0.0.0"),
+	}
+	got := FilterAndSortIPs(raw)
+	want := []string{"8.8.8.8", "10.0.0.5", "2402:4e00:c032::1", "fd00::2"}
+	if len(got) != len(want) {
+		t.Fatalf("FilterAndSortIPs len = %d (%v), want %d (%v)", len(got), got, len(want), want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("FilterAndSortIPs[%d] = %q, want %q (all=%v)", i, got[i], want[i], got)
+		}
+	}
+
+	// Verify 128-address cap across large multi-IP hosts (e.g. VPS with 150 aliases)
+	var many []net.IP
+	for i := 0; i < 150; i++ {
+		many = append(many, net.ParseIP(fmt.Sprintf("2402:4e00:c032::%x", i+1)))
+	}
+	capped := FilterAndSortIPs(many)
+	if len(capped) != 128 {
+		t.Fatalf("FilterAndSortIPs cap = %d, want 128", len(capped))
 	}
 }

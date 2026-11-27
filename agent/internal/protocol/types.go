@@ -34,16 +34,17 @@ type Envelope[T any] struct {
 
 // DeviceMetrics represents host telemetry sent in heartbeats.
 type DeviceMetrics struct {
-	CPUUsage      float64 `json:"cpu_usage"`
-	MemoryUsed    int     `json:"memory_used"`
-	MemoryTotal   int     `json:"memory_total,omitempty"`
-	MemoryPercent float64 `json:"memory_percent,omitempty"`
-	DiskUsage     float64 `json:"disk_usage"`
-	DiskTotal     int64   `json:"disk_total,omitempty"`
-	NetworkIn     int     `json:"network_in"`
-	NetworkOut    int     `json:"network_out"`
-	LoadAvg       string  `json:"load_avg,omitempty"`
-	Uptime        int64   `json:"uptime,omitempty"`
+	CPUUsage      float64  `json:"cpu_usage"`
+	MemoryUsed    int      `json:"memory_used"`
+	MemoryTotal   int      `json:"memory_total,omitempty"`
+	MemoryPercent float64  `json:"memory_percent,omitempty"`
+	DiskUsage     float64  `json:"disk_usage"`
+	DiskTotal     int64    `json:"disk_total,omitempty"`
+	NetworkIn     int      `json:"network_in"`
+	NetworkOut    int      `json:"network_out"`
+	LoadAvg       string   `json:"load_avg,omitempty"`
+	Uptime        int64    `json:"uptime,omitempty"`
+	IPAddresses   []string `json:"ip_addresses,omitempty"`
 }
 
 // RegisterRequest corresponds to AgentRegisterRequest.

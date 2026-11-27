@@ -1,8 +1,10 @@
 #!/bin/sh
-# Cslite Ultra-Lightweight POSIX/BusyBox Agent (OpenWrt / Linux / macOS / Android)
-# Zero non-POSIX dependencies; works with curl/wget/uclient-fetch and jsonfilter/awk.
+# Purpose: Ultra-lightweight POSIX/BusyBox CSLite agent (OpenWrt, Linux, macOS, Android).
+# Context: Served at /agent-lite.sh; assembled cleanly from agent/openwrt/lite/*.sh.
+# Usage: cslite-agent-lite <run|install|uninstall|start|stop|restart|status|version> [options]
+# Requires: POSIX sh, awk, and curl, wget, uclient-fetch, or openssl.
 
-VERSION="v1.0.0"
+VERSION="v1.2.0"
 
 is_termux() {
 	[ -n "${TERMUX_VERSION:-}" ] || [ -d /data/data/com.termux/files/usr ] || [ -d /data/data/com.termux ]
@@ -178,6 +180,8 @@ SERVER=""
 API_KEY=""
 DEVICE_NAME=""
 DEVICE_ID=""
+USER_AGENT=""
+REFERER=""
 POLL_INTERVAL=""
 HEARTBEAT_INTERVAL=""
 POLL_EXPLICIT=0
@@ -191,12 +195,22 @@ AGENT_ID=""
 BOUND_DEVICE_ID=""
 BASE_URL=""
 HTTP_CLIENT=""
+REQ_UA=""
+REQ_REFERER=""
+SLEEP_PID=""
 LAST_HB_SYNC=0
 PREV_CPU_TOTAL=""
 PREV_CPU_IDLE=""
 PREV_NET_RX=""
 PREV_NET_TX=""
 PREV_NET_TS=""
+METRICS_JSON=""
+PROC_STAT_FILE="${CSLITE_PROC_STAT:-/proc/stat}"
+PROC_NET_DEV_FILE="${CSLITE_PROC_NET_DEV:-/proc/net/dev}"
+PROC_MEMINFO_FILE="${CSLITE_PROC_MEMINFO:-/proc/meminfo}"
+PROC_LOADAVG_FILE="${CSLITE_PROC_LOADAVG:-/proc/loadavg}"
+PROC_UPTIME_FILE="${CSLITE_PROC_UPTIME:-/proc/uptime}"
+METRICS_PRIME_DELAY="${CSLITE_METRICS_PRIME_DELAY:-1}"
 
 log_msg() {
 	level="$1"
@@ -722,14 +736,21 @@ http_decode_response() {
 	return 1
 }
 
+resolve_request_headers() {
+	REQ_UA="${USER_AGENT:-CSLite-Agent/lite-${VERSION}}"
+	base_root="${BASE_URL%/api}"
+	REQ_REFERER="${REFERER:-${base_root}/agent/telemetry}"
+}
+
 write_http_request() {
 	method="$1"
 	req_path="$2"
 	host_hdr="$3"
 	body="${4:-}"
 	content_len="${5:-}"
-	printf '%s %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: cslite-agent-lite/%s\r\nAccept: application/json\r\nAccept-Encoding: identity\r\nX-API-Key: %s\r\nConnection: close\r\n' \
-		"$method" "$req_path" "$host_hdr" "$VERSION" "$API_KEY"
+	resolve_request_headers
+	printf '%s %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: %s\r\nReferer: %s\r\nAccept: application/json\r\nAccept-Encoding: identity\r\nX-API-Key: %s\r\nConnection: close\r\n' \
+		"$method" "$req_path" "$host_hdr" "$REQ_UA" "$REQ_REFERER" "$API_KEY"
 	if [ "$method" = "POST" ]; then
 		printf 'Content-Type: application/json\r\nContent-Length: %s\r\n\r\n%s' "$content_len" "$body"
 	else
@@ -804,6 +825,7 @@ http_request() {
 	path="$2"
 	body="${3:-}"
 	url="${BASE_URL}${path}"
+	resolve_request_headers
 
 	mkdir -p "$TMP_DIR" 2>/dev/null || true
 	http_tmp="${TMP_DIR}/cslite-http.$$"
@@ -815,21 +837,31 @@ http_request() {
 		curl|/system/bin/curl)
 			if [ "$method" = "POST" ]; then
 				"$HTTP_CLIENT" -sS --connect-timeout 10 -m 30 -X POST -o "$out_f" \
+					-A "$REQ_UA" \
+					-H "Referer: $REQ_REFERER" \
 					-H "Content-Type: application/json" \
 					-H "X-API-Key: $API_KEY" \
 					-d "$body" "$url" 2>"$err_f" || rc=$?
 			else
-				"$HTTP_CLIENT" -sS --connect-timeout 10 -m 30 -o "$out_f" -H "X-API-Key: $API_KEY" "$url" 2>"$err_f" || rc=$?
+				"$HTTP_CLIENT" -sS --connect-timeout 10 -m 30 -o "$out_f" \
+					-A "$REQ_UA" \
+					-H "Referer: $REQ_REFERER" \
+					-H "X-API-Key: $API_KEY" "$url" 2>"$err_f" || rc=$?
 			fi
 			;;
 		wget|/system/bin/wget)
 			if [ "$method" = "POST" ]; then
 				"$HTTP_CLIENT" -O "$out_f" \
+					--header="User-Agent: $REQ_UA" \
+					--header="Referer: $REQ_REFERER" \
 					--header="Content-Type: application/json" \
 					--header="X-API-Key: $API_KEY" \
 					--post-data="$body" "$url" 2>"$err_f" || rc=$?
 			else
-				"$HTTP_CLIENT" -O "$out_f" --header="X-API-Key: $API_KEY" "$url" 2>"$err_f" || rc=$?
+				"$HTTP_CLIENT" -O "$out_f" \
+					--header="User-Agent: $REQ_UA" \
+					--header="Referer: $REQ_REFERER" \
+					--header="X-API-Key: $API_KEY" "$url" 2>"$err_f" || rc=$?
 			fi
 			;;
 		uclient-fetch)
@@ -915,6 +947,8 @@ load_config() {
 	cli_key="$API_KEY"
 	cli_name="$DEVICE_NAME"
 	cli_dev="$DEVICE_ID"
+	cli_ua="$USER_AGENT"
+	cli_ref="$REFERER"
 	cli_poll="$POLL_INTERVAL"
 	cli_hb="$HEARTBEAT_INTERVAL"
 	cli_log="$LOG_LEVEL"
@@ -923,6 +957,8 @@ load_config() {
 	API_KEY=""
 	DEVICE_NAME=""
 	DEVICE_ID=""
+	USER_AGENT=""
+	REFERER=""
 	POLL_INTERVAL=""
 	HEARTBEAT_INTERVAL=""
 	POLL_EXPLICIT=0
@@ -936,6 +972,8 @@ load_config() {
 			API_KEY="$(sanitize_config_field "$(json_get "$cfg_raw" "api_key")")"
 			DEVICE_NAME="$(sanitize_config_field "$(json_get "$cfg_raw" "name")")"
 			DEVICE_ID="$(sanitize_config_field "$(json_get "$cfg_raw" "device_id")")"
+			USER_AGENT="$(sanitize_config_field "$(json_get "$cfg_raw" "user_agent")")"
+			REFERER="$(sanitize_config_field "$(json_get "$cfg_raw" "referer")")"
 			POLL_INTERVAL="$(sanitize_config_field "$(json_get "$cfg_raw" "poll_interval")")"
 			HEARTBEAT_INTERVAL="$(sanitize_config_field "$(json_get "$cfg_raw" "heartbeat_interval")")"
 			LOG_LEVEL="$(sanitize_config_field "$(json_get "$cfg_raw" "log_level")")"
@@ -962,6 +1000,9 @@ load_config() {
 	[ -n "${CSLITE_DEVICE_ID:-}" ] && DEVICE_ID="$CSLITE_DEVICE_ID"
 	[ -z "$DEVICE_ID" ] && [ -n "${AGENT_DEVICE_ID:-}" ] && DEVICE_ID="$AGENT_DEVICE_ID"
 
+	[ -n "${CSLITE_USER_AGENT:-}" ] && USER_AGENT="$CSLITE_USER_AGENT"
+	[ -n "${CSLITE_REFERER:-}" ] && REFERER="$CSLITE_REFERER"
+
 	if [ -n "${CSLITE_POLL_INTERVAL:-}" ]; then
 		POLL_INTERVAL="$CSLITE_POLL_INTERVAL"
 		is_pos_int "$POLL_INTERVAL" && POLL_EXPLICIT=1
@@ -980,6 +1021,8 @@ load_config() {
 	[ -n "$cli_key" ] && API_KEY="$cli_key"
 	[ -n "$cli_name" ] && DEVICE_NAME="$cli_name"
 	[ -n "$cli_dev" ] && DEVICE_ID="$cli_dev"
+	[ -n "$cli_ua" ] && USER_AGENT="$cli_ua"
+	[ -n "$cli_ref" ] && REFERER="$cli_ref"
 	if [ -n "$cli_poll" ]; then
 		POLL_INTERVAL="$cli_poll"
 		is_pos_int "$POLL_INTERVAL" && POLL_EXPLICIT=1
@@ -1010,13 +1053,18 @@ save_config() {
 	case "$HEARTBEAT_INTERVAL" in
 		''|0*|*[!0-9]*) HEARTBEAT_INTERVAL=60 ;;
 	esac
+	extra_hdrs=""
+	[ -n "$USER_AGENT" ] && extra_hdrs="${extra_hdrs}  \"user_agent\": $(json_quote "$USER_AGENT"),
+"
+	[ -n "$REFERER" ] && extra_hdrs="${extra_hdrs}  \"referer\": $(json_quote "$REFERER"),
+"
 	cat > "$tmp_cfg" <<EOF
 {
   "server": $(json_quote "$SERVER"),
   "api_key": $(json_quote "$API_KEY"),
   "name": $(json_quote "$DEVICE_NAME"),
   "device_id": $(json_quote "$DEVICE_ID"),
-  "poll_interval": ${POLL_INTERVAL},
+${extra_hdrs}  "poll_interval": ${POLL_INTERVAL},
   "heartbeat_interval": ${HEARTBEAT_INTERVAL},
   "log_level": $(json_quote "${LOG_LEVEL:-info}")
 }
@@ -1141,7 +1189,74 @@ sanitize_float() {
 	esac
 }
 
-collect_metrics_json() {
+is_uint() {
+	case "${1:-}" in
+		''|*[!0-9]*) return 1 ;;
+		*) return 0 ;;
+	esac
+}
+
+read_proc_cpu() {
+	[ -r "$PROC_STAT_FILE" ] || return 1
+	stat_raw="$(cat "$PROC_STAT_FILE" 2>/dev/null || true)"
+	[ -n "$stat_raw" ] || return 1
+	printf '%s\n' "$stat_raw" | run_awk '
+	$1 == "cpu" {
+		tot = 0
+		for (i = 2; i <= NF && i <= 9; i++) tot += $i
+		idle = (NF >= 5 ? $5 : 0) + (NF >= 6 ? $6 : 0)
+		printf "%.0f %.0f", tot + 0, idle + 0
+		exit
+	}' 2>/dev/null
+}
+
+read_proc_net() {
+	[ -r "$PROC_NET_DEV_FILE" ] || return 1
+	net_raw="$(cat "$PROC_NET_DEV_FILE" 2>/dev/null || true)"
+	[ -n "$net_raw" ] || return 1
+	printf '%s\n' "$net_raw" | run_awk '
+	NR > 2 {
+		idx = index($0, ":")
+		if (idx == 0) next
+		iface = substr($0, 1, idx - 1)
+		gsub(/^[ \t]+|[ \t]+$/, "", iface)
+		if (iface == "" || iface == "lo") next
+		rest = substr($0, idx + 1)
+		n = split(rest, f, /[ \t]+/)
+		# Handle leading space creating empty f[1]
+		off = (f[1] == "" ? 1 : 0)
+		if (n - off >= 9) {
+			rx += f[1 + off] + 0
+			tx += f[9 + off] + 0
+		}
+	}
+	END { printf "%.0f %.0f", rx + 0, tx + 0 }' 2>/dev/null
+}
+
+prime_metrics_baseline() {
+	if [ -r "$PROC_STAT_FILE" ]; then
+		set -- $(read_proc_cpu || true)
+		p_tot="${1:-}"
+		p_idle="${2:-}"
+		if is_uint "$p_tot" && is_uint "$p_idle"; then
+			PREV_CPU_TOTAL="$p_tot"
+			PREV_CPU_IDLE="$p_idle"
+		fi
+	fi
+	if [ -r "$PROC_NET_DEV_FILE" ]; then
+		set -- $(read_proc_net || true)
+		p_rx="${1:-}"
+		p_tx="${2:-}"
+		p_ts="$(date +%s 2>/dev/null || echo 0)"
+		if is_uint "$p_rx" && is_uint "$p_tx" && is_uint "$p_ts"; then
+			PREV_NET_RX="$p_rx"
+			PREV_NET_TX="$p_tx"
+			PREV_NET_TS="$p_ts"
+		fi
+	fi
+}
+
+collect_metrics() {
 	cpu_usage=0
 	mem_used=0
 	mem_total=0
@@ -1154,84 +1269,62 @@ collect_metrics_json() {
 	uptime_sec=0
 	plat="$(detect_platform)"
 
+	if [ -z "$PREV_CPU_TOTAL" ] && [ -z "$PREV_NET_RX" ] && is_pos_int "${METRICS_PRIME_DELAY:-1}" && { [ -r "$PROC_STAT_FILE" ] || [ -r "$PROC_NET_DEV_FILE" ]; }; then
+		prime_metrics_baseline
+		sleep "$METRICS_PRIME_DELAY"
+	fi
+
 	# Guard /proc/stat gracefully (Android SELinux may deny read).
-	if [ -r /proc/stat ]; then
-		stat_raw="$(cat /proc/stat 2>/dev/null || true)"
-		if [ -n "$stat_raw" ]; then
-			set -- $(printf '%s\n' "$stat_raw" | run_awk '
-			$1 == "cpu" {
-				tot = 0
-				for (i = 2; i <= NF && i <= 9; i++) tot += $i
-				idle = $5 + (NF >= 6 ? $6 : 0)
-				printf "%s %s", tot, idle
-				exit
-			}' 2>/dev/null || true)
-			cur_tot="${1:-}"
-			cur_idle="${2:-}"
-			case "$cur_tot:$cur_idle" in
-				*[!0-9:]*|:*) ;;
-				*)
-					if [ -n "$PREV_CPU_TOTAL" ] && [ -n "$PREV_CPU_IDLE" ]; then
-						cpu_usage="$(run_awk -v pt="$PREV_CPU_TOTAL" -v pi="$PREV_CPU_IDLE" -v ct="$cur_tot" -v ci="$cur_idle" '
-						BEGIN {
-							dt = ct - pt; di = ci - pi
-							if (dt <= 0) { print "0"; exit }
-							if (di < 0) di = 0
-							if (di >= dt) { print "0"; exit }
-							printf "%.2f", ((dt - di) / dt) * 100
-						}' 2>/dev/null || printf '0')"
-					fi
-					PREV_CPU_TOTAL="$cur_tot"
-					PREV_CPU_IDLE="$cur_idle"
-					;;
-			esac
+	if [ -r "$PROC_STAT_FILE" ]; then
+		set -- $(read_proc_cpu || true)
+		cur_tot="${1:-}"
+		cur_idle="${2:-}"
+		if is_uint "$cur_tot" && is_uint "$cur_idle"; then
+			if is_uint "$PREV_CPU_TOTAL" && is_uint "$PREV_CPU_IDLE"; then
+				cpu_usage="$(run_awk -v pt="$PREV_CPU_TOTAL" -v pi="$PREV_CPU_IDLE" -v ct="$cur_tot" -v ci="$cur_idle" '
+				BEGIN {
+					pt += 0; pi += 0; ct += 0; ci += 0
+					dt = ct - pt; di = ci - pi
+					if (dt <= 0) { print "0"; exit }
+					if (di < 0) di = 0
+					if (di >= dt) { print "0"; exit }
+					printf "%.2f", ((dt - di) / dt) * 100
+				}' 2>/dev/null || printf '0')"
+			fi
+			PREV_CPU_TOTAL="$cur_tot"
+			PREV_CPU_IDLE="$cur_idle"
 		fi
 	fi
 
 	# Guard /proc/net/dev gracefully (Android SELinux may deny read).
-	if [ -r /proc/net/dev ]; then
-		net_raw="$(cat /proc/net/dev 2>/dev/null || true)"
-		if [ -n "$net_raw" ]; then
-			set -- $(printf '%s\n' "$net_raw" | run_awk '
-			NR > 2 {
-				idx = index($0, ":")
-				if (idx == 0) next
-				iface = substr($0, 1, idx - 1)
-				gsub(/^[ \t]+|[ \t]+$/, "", iface)
-				if (iface == "" || iface == "lo") next
-				rest = substr($0, idx + 1)
-				n = split(rest, f, /[ \t]+/)
-				# Handle leading space creating empty f[1]
-				off = (f[1] == "" ? 1 : 0)
-				if (n - off >= 9) {
-					rx += f[1 + off]
-					tx += f[9 + off]
-				}
-			}
-			END { printf "%.0f %.0f", rx, tx }' 2>/dev/null || true)
-			cur_rx="${1:-}"
-			cur_tx="${2:-}"
-			now_ts="$(date +%s 2>/dev/null || echo 0)"
-			case "$cur_rx:$cur_tx:$now_ts" in
-				*[!0-9:]*|:*) ;;
-				*)
-					if [ -n "$PREV_NET_RX" ] && [ -n "$PREV_NET_TX" ] && [ -n "$PREV_NET_TS" ]; then
-						dt=$((now_ts - PREV_NET_TS))
-						if [ "$dt" -gt 0 ]; then
-							net_in="$(run_awk -v p="$PREV_NET_RX" -v c="$cur_rx" -v dt="$dt" 'BEGIN { if (c>=p) printf "%d", (c-p)/dt/1024; else print "0" }' 2>/dev/null || printf '0')"
-							net_out="$(run_awk -v p="$PREV_NET_TX" -v c="$cur_tx" -v dt="$dt" 'BEGIN { if (c>=p) printf "%d", (c-p)/dt/1024; else print "0" }' 2>/dev/null || printf '0')"
-						fi
-					fi
-					PREV_NET_RX="$cur_rx"
-					PREV_NET_TX="$cur_tx"
-					PREV_NET_TS="$now_ts"
-					;;
-			esac
+	if [ -r "$PROC_NET_DEV_FILE" ]; then
+		set -- $(read_proc_net || true)
+		cur_rx="${1:-}"
+		cur_tx="${2:-}"
+		now_ts="$(date +%s 2>/dev/null || echo 0)"
+		if is_uint "$cur_rx" && is_uint "$cur_tx" && is_uint "$now_ts"; then
+			if is_uint "$PREV_NET_RX" && is_uint "$PREV_NET_TX" && is_uint "$PREV_NET_TS"; then
+				dt=$((now_ts - PREV_NET_TS))
+				if [ "$dt" -gt 0 ]; then
+					set -- $(run_awk -v pr="$PREV_NET_RX" -v cr="$cur_rx" -v pt="$PREV_NET_TX" -v ct="$cur_tx" -v dt="$dt" '
+					function rate_kb(p, c, d) {
+						p += 0; c += 0; d += 0
+						if (c >= p && d > 0) return int(((c - p) / d / 1024) + 0.5)
+						return 0
+					}
+					BEGIN { printf "%.0f %.0f", rate_kb(pr, cr, dt), rate_kb(pt, ct, dt) }' 2>/dev/null || true)
+					net_in="${1:-0}"
+					net_out="${2:-0}"
+				fi
+			fi
+			PREV_NET_RX="$cur_rx"
+			PREV_NET_TX="$cur_tx"
+			PREV_NET_TS="$now_ts"
 		fi
 	fi
 
-	if [ -r /proc/meminfo ]; then
-		mem_raw="$(cat /proc/meminfo 2>/dev/null || true)"
+	if [ -r "$PROC_MEMINFO_FILE" ]; then
+		mem_raw="$(cat "$PROC_MEMINFO_FILE" 2>/dev/null || true)"
 		if [ -n "$mem_raw" ]; then
 			set -- $(printf '%s\n' "$mem_raw" | run_awk '
 			/^MemTotal:/ { tot=$2 }
@@ -1260,8 +1353,15 @@ collect_metrics_json() {
 	fi
 
 	disk_target="/"
-	[ "$plat" = "android" ] && [ -d /data ] && disk_target="/data"
-	df_out="$(df -k "$disk_target" 2>/dev/null || df -k / 2>/dev/null || true)"
+	if [ "$plat" = "android" ] && [ -d /data ]; then
+		disk_target="/data"
+	elif [ "$plat" = "openwrt" ] && [ -d /overlay ]; then
+		disk_target="/overlay"
+	fi
+	df_out="$(df -k "$disk_target" 2>/dev/null)" || df_out=""
+	if [ -z "$df_out" ] && [ "$disk_target" != "/" ]; then
+		df_out="$(df -k / 2>/dev/null || true)"
+	fi
 	if [ -n "$df_out" ]; then
 		set -- $(printf '%s\n' "$df_out" | run_awk '
 		NR > 1 && !found {
@@ -1276,8 +1376,8 @@ collect_metrics_json() {
 		disk_total="${2:-0}"
 	fi
 
-	if [ -r /proc/loadavg ]; then
-		la_raw="$(cat /proc/loadavg 2>/dev/null || true)"
+	if [ -r "$PROC_LOADAVG_FILE" ]; then
+		la_raw="$(cat "$PROC_LOADAVG_FILE" 2>/dev/null || true)"
 		if [ -n "$la_raw" ]; then
 			load_avg="$(printf '%s\n' "$la_raw" | run_awk '{print $1" "$2" "$3}' 2>/dev/null || true)"
 		fi
@@ -1285,8 +1385,8 @@ collect_metrics_json() {
 		load_avg="$(sysctl -n vm.loadavg 2>/dev/null | run_awk '{gsub(/[{}]/, ""); if (NF>=3) print $1" "$2" "$3}' 2>/dev/null || true)"
 	fi
 
-	if [ -r /proc/uptime ]; then
-		up_raw="$(cat /proc/uptime 2>/dev/null || true)"
+	if [ -r "$PROC_UPTIME_FILE" ]; then
+		up_raw="$(cat "$PROC_UPTIME_FILE" 2>/dev/null || true)"
 		if [ -n "$up_raw" ]; then
 			uptime_sec="$(printf '%s\n' "$up_raw" | run_awk '{print int($1)}' 2>/dev/null || printf '0')"
 		fi
@@ -1309,12 +1409,75 @@ collect_metrics_json() {
 	net_out="$(sanitize_int "$net_out")"
 	uptime_sec="$(sanitize_int "$uptime_sec")"
 
-	printf '{"cpu_usage":%s,"memory_used":%s,"memory_total":%s,"memory_percent":%s,"disk_usage":%s,"disk_total":%s,"network_in":%s,"network_out":%s,"load_avg":%s,"uptime":%s}' \
-		"$cpu_usage" "$mem_used" "$mem_total" "$mem_pct" "$disk_pct" "$disk_total" "$net_in" "$net_out" "$(json_quote "$load_avg")" "$uptime_sec"
+	METRICS_JSON="$(printf '{"cpu_usage":%s,"memory_used":%s,"memory_total":%s,"memory_percent":%s,"disk_usage":%s,"disk_total":%s,"network_in":%s,"network_out":%s,"load_avg":%s,"uptime":%s,"ip_addresses":%s}' \
+		"$cpu_usage" "$mem_used" "$mem_total" "$mem_pct" "$disk_pct" "$disk_total" "$net_in" "$net_out" "$(json_quote "$load_avg")" "$uptime_sec" "$(collect_ip_addresses_json)")"
+}
+
+collect_ip_addresses_json() {
+	raw_ips=""
+	if command -v ip >/dev/null 2>&1; then
+		raw_ips="$(ip -o addr show 2>/dev/null | run_awk '
+		/inet6? / {
+			for (i = 1; i <= NF; i++) {
+				if ($i == "inet" || $i == "inet6") {
+					addr = $(i + 1)
+					sub(/\/.*/, "", addr)
+					sub(/%.*/, "", addr)
+					if (addr != "") print addr
+					break
+				}
+			}
+		}' 2>/dev/null || true)"
+	fi
+	if [ -z "$raw_ips" ] && command -v ifconfig >/dev/null 2>&1; then
+		raw_ips="$({ ifconfig -a 2>/dev/null || ifconfig 2>/dev/null || true; } | run_awk '
+		/inet / {
+			for (i = 1; i <= NF; i++) {
+				if ($i ~ /^addr:/ && length($i) > 5) { print substr($i, 6); break }
+				if ($i == "inet" && $(i + 1) ~ /^[0-9.]+$/) { print $(i + 1); break }
+			}
+		}
+		/inet6 / {
+			for (i = 1; i <= NF; i++) {
+				if ($i ~ /^addr:/ && length($i) > 5) { a = substr($i, 6); sub(/\/.*/, "", a); sub(/%.*/, "", a); print a; break }
+				if ($i == "inet6" && $(i + 1) ~ /:/) { a = $(i + 1); sub(/\/.*/, "", a); sub(/%.*/, "", a); print a; break }
+			}
+		}' 2>/dev/null || true)"
+	fi
+	if [ -z "$raw_ips" ]; then
+		printf '[]'
+		return 0
+	fi
+	printf '%s\n' "$raw_ips" | run_awk '
+	{
+		ip = $0
+		gsub(/^[ \t\r]+|[ \t\r]+$/, "", ip)
+		if (ip == "" || ip !~ /^[0-9A-Fa-f.:]+$/) next
+		low = tolower(ip)
+		if (low ~ /^127\./ || low ~ /^169\.254\./ || low == "0.0.0.0" || low == "::1" || low == "::" || low ~ /^fe80:/ || low ~ /^ff/) next
+		if (!seen[ip]++) {
+			ips[++n] = ip
+			if (n >= 128) exit
+		}
+	}
+	END {
+		printf "["
+		for (i = 1; i <= n; i++) {
+			if (i > 1) printf ","
+			printf "\"%s\"", ips[i]
+		}
+		printf "]"
+	}' 2>/dev/null || printf '[]'
+}
+
+collect_metrics_json() {
+	collect_metrics
+	printf '%s' "$METRICS_JSON"
 }
 
 send_heartbeat() {
-	metrics_json="$(collect_metrics_json)"
+	collect_metrics
+	metrics_json="$METRICS_JSON"
 	host="$(hostname 2>/dev/null || uname -n 2>/dev/null || true)"
 	osver="$(detect_os_version)"
 	ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
@@ -1485,12 +1648,16 @@ execute_task_and_report() {
 
 fetch_commands_raw() {
 	include_metrics="${1:-${POLL_INCLUDE_METRICS:-0}}"
+	pre_metrics_json="${2:-}"
 	if [ "$include_metrics" = "1" ]; then
-		metrics_json="$(collect_metrics_json)"
+		if [ -z "$pre_metrics_json" ]; then
+			collect_metrics
+			pre_metrics_json="$METRICS_JSON"
+		fi
 		host="$(hostname 2>/dev/null || uname -n 2>/dev/null || true)"
 		osver="$(detect_os_version)"
 		ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
-		poll_body="{\"agent_id\":$(json_quote "$AGENT_ID"),\"api_key\":$(json_quote "$API_KEY"),\"limit\":1,\"metrics\":${metrics_json},\"version\":$(json_quote "$VERSION"),\"os_version\":$(json_quote "$osver"),\"hostname\":$(json_quote "$host"),\"timestamp\":$(json_quote "$ts")}"
+		poll_body="{\"agent_id\":$(json_quote "$AGENT_ID"),\"api_key\":$(json_quote "$API_KEY"),\"limit\":1,\"metrics\":${pre_metrics_json},\"version\":$(json_quote "$VERSION"),\"os_version\":$(json_quote "$osver"),\"hostname\":$(json_quote "$host"),\"timestamp\":$(json_quote "$ts")}"
 	else
 		poll_body="{\"agent_id\":$(json_quote "$AGENT_ID"),\"api_key\":$(json_quote "$API_KEY"),\"limit\":1}"
 	fi
@@ -1499,14 +1666,19 @@ fetch_commands_raw() {
 
 poll_once() {
 	include_metrics="${1:-${POLL_INCLUDE_METRICS:-0}}"
-	resp="$(fetch_commands_raw "$include_metrics")" || return 1
+	poll_metrics_json=""
+	if [ "$include_metrics" = "1" ]; then
+		collect_metrics
+		poll_metrics_json="$METRICS_JSON"
+	fi
+	resp="$(fetch_commands_raw "$include_metrics" "$poll_metrics_json")" || return 1
 
 	code="$(json_get "$resp" "code")"
 	if [ "$code" = "40010" ]; then
 		log_msg WARN "poll returned 40010; re-registering"
 		rm -f "$STATE_FILE"
 		register_agent || return 1
-		resp="$(fetch_commands_raw "$include_metrics")" || return 1
+		resp="$(fetch_commands_raw "$include_metrics" "$poll_metrics_json")" || return 1
 		code="$(json_get "$resp" "code")"
 	fi
 	if [ "$code" != "20000" ]; then
@@ -1535,6 +1707,8 @@ parse_flags() {
 			--key|--apikey|--api-key) API_KEY="$2"; shift 2 ;;
 			--name) DEVICE_NAME="$2"; shift 2 ;;
 			--device-id) DEVICE_ID="$2"; shift 2 ;;
+			--user-agent) USER_AGENT="$2"; shift 2 ;;
+			--referer) REFERER="$2"; shift 2 ;;
 			--config) CONFIG_FILE="$2"; cfg_flag_set=1; shift 2 ;;
 			--poll) POLL_INTERVAL="$2"; shift 2 ;;
 			--heartbeat) HEARTBEAT_INTERVAL="$2"; shift 2 ;;
@@ -1564,6 +1738,13 @@ parse_flags() {
 	fi
 }
 
+sleep_interruptible() {
+	sleep "$1" &
+	SLEEP_PID=$!
+	wait "$SLEEP_PID" 2>/dev/null || true
+	SLEEP_PID=""
+}
+
 cmd_run() {
 	parse_flags "$@"
 	load_config
@@ -1591,11 +1772,11 @@ cmd_run() {
 	fi
 
 	mkdir -p "$TMP_DIR" 2>/dev/null || true
-	trap 'log_msg INFO "shutting down"; rm -f "$PID_FILE"; exit 0' TERM INT
+	trap 'log_msg INFO "shutting down"; [ -n "${SLEEP_PID:-}" ] && kill -TERM "$SLEEP_PID" 2>/dev/null || true; rm -f "$PID_FILE"; exit 0' TERM INT
 	printf '%s\n' "$$" > "$PID_FILE" 2>/dev/null || true
 
 	while ! ensure_registered; do
-		sleep 5
+		sleep_interruptible 5
 	done
 	if send_heartbeat; then
 		last_hb=$(date +%s 2>/dev/null || echo 0)
@@ -1633,9 +1814,9 @@ cmd_run() {
 		esac
 
 		if [ "$now" -lt "$fast_until" ]; then
-			sleep 1
+			sleep_interruptible 1
 		else
-			sleep "${POLL_INTERVAL:-5}"
+			sleep_interruptible "${POLL_INTERVAL:-5}"
 		fi
 	done
 }

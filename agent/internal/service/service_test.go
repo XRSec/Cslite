@@ -26,6 +26,26 @@ func TestRenderOpenWrtInit(t *testing.T) {
 	}
 }
 
+func TestRenderOpenRCInit(t *testing.T) {
+	out := RenderOpenRCInit("/usr/local/bin/cslite-agent", "/etc/cslite-agent/config.json", "/var/log/cslite-agent.log")
+	required := []string{
+		"#!/sbin/openrc-run",
+		`name="cslite-agent"`,
+		`command='/usr/local/bin/cslite-agent'`,
+		`command_args='run --config '\''/etc/cslite-agent/config.json'\'''`,
+		`command_background="yes"`,
+		`pidfile="/run/cslite-agent.pid"`,
+		`output_log='/var/log/cslite-agent.log'`,
+		`error_log='/var/log/cslite-agent.log'`,
+		"need net",
+	}
+	for _, needle := range required {
+		if !strings.Contains(out, needle) {
+			t.Errorf("RenderOpenRCInit missing %q:\n%s", needle, out)
+		}
+	}
+}
+
 func TestRenderSystemdUnit(t *testing.T) {
 	sysUnit := RenderSystemdUnit("/usr/local/bin/cslite-agent", "/etc/cslite-agent/config.json", false)
 	if !strings.Contains(sysUnit, "ExecStart=/usr/local/bin/cslite-agent run --config /etc/cslite-agent/config.json") {

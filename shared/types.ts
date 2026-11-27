@@ -82,6 +82,9 @@ export interface ApiKeyDTO {
   name: string;
   key_prefix?: string;
   user_id?: number;
+  owner_username?: string;
+  device_id?: string | null;
+  device_name?: string;
   created_at: string;
   last_used?: string | null;
 }
@@ -117,6 +120,7 @@ export interface DeviceMetrics {
   network_out: number;
   load_avg?: string;
   uptime?: number;
+  ip_addresses?: string[];
 }
 
 export interface DeviceDTO {
@@ -129,6 +133,7 @@ export interface DeviceDTO {
   status: DeviceStatus;
   owner_id: number;
   group_id?: string | null;
+  group_ids?: string[];
   ip_address?: string;
   agent_id?: string;
   agent_version?: string;
@@ -142,19 +147,56 @@ export interface CreateDeviceRequest {
   name: string;
   platform: PlatformType;
   group_id?: string;
+  group_ids?: string[];
 }
 
 export interface CreateDeviceResponse {
   id: string;
+  name?: string;
+  platform?: PlatformType;
+  api_key?: string;
+  api_key_id?: string;
+  api_key_prefix?: string;
   install_command: string;
   install_commands?: Record<string, string>;
   expires_at: string;
+}
+
+export interface DeviceDeployKeyRequest {
+  rotate?: boolean;
+}
+
+export interface DeviceDeployKeyResponse {
+  id: string;
+  device_id: string;
+  name: string;
+  api_key: string;
+  key_prefix: string;
+  created_at: string;
+  created: boolean;
+  rotated?: boolean;
+  install_command: string;
+  install_commands: Record<string, string>;
+}
+
+export interface UpgradeDeviceRequest {
+  version?: string;
+  bin_url?: string;
+  lite?: boolean;
+}
+
+export interface UpgradeDeviceResponse {
+  command_id: string;
+  execution_id: string;
+  device_id: string;
+  version: string;
 }
 
 export interface UpdateDeviceRequest {
   name?: string;
   platform?: PlatformType;
   group_id?: string | null;
+  group_ids?: string[];
 }
 
 export interface DeviceListResponse {
@@ -173,6 +215,41 @@ export interface DeviceStatusResponse {
 
 export interface BatchDeleteDevicesRequest {
   ids: string[];
+}
+
+export type HealthHistoryRange = '1h' | '24h' | '7d' | '30d';
+export type HealthBucketStatus = 'ok' | 'warn' | 'err' | 'empty';
+
+export interface HealthHistoryBucketDTO {
+  start: string;
+  end: string;
+  label: string;
+  status: HealthBucketStatus;
+  uptime_pct: number | null;
+  online_devices: number;
+  healthy_devices: number;
+  total_devices: number;
+  samples: number;
+  expected: number;
+}
+
+export interface DeviceHealthSummaryDTO {
+  device_id: string;
+  uptime_pct: number | null;
+  slots: HealthBucketStatus[];
+}
+
+export interface HealthHistoryResponse {
+  range: HealthHistoryRange;
+  granularity: '5m' | 'hour' | 'day';
+  bucket_seconds: number;
+  timezone: string;
+  heartbeat_interval: number;
+  poll_interval: number;
+  generated_at: string;
+  overall_uptime_pct: number | null;
+  buckets: HealthHistoryBucketDTO[];
+  devices: DeviceHealthSummaryDTO[];
 }
 
 export interface GroupDTO {
@@ -409,6 +486,8 @@ export interface CommandLogDTO {
   execution_id: string;
   command_id?: string;
   command_name?: string;
+  command_type?: CommandType;
+  command_content?: string;
   device_id: string;
   device_name?: string;
   status: ExecutionStatus;
@@ -453,5 +532,35 @@ export interface SystemInfoDTO {
   allow_registration: boolean;
   heartbeat_interval: number;
   poll_interval: number;
+  timezone: string;
+  timezone_source?: 'setting' | 'env' | 'default';
+  env_timezone?: string | null;
+  log_retention_days?: number;
+  log_retention_source?: 'setting' | 'env' | 'default';
+  env_log_retention_days?: number | null;
+  last_cleanup_at?: string | null;
   server_time: string;
+}
+
+export interface UpdateSystemSettingsRequest {
+  timezone?: string | null;
+  log_retention_days?: number | null;
+}
+
+export interface SystemCleanupRequest {
+  retention_days?: number;
+}
+
+export interface SystemCleanupResponse {
+  retention_days: number;
+  cutoff_at: string;
+  ran_at: string;
+  deleted: {
+    execution_results: number;
+    executions: number;
+    commands: number;
+    device_logs: number;
+    audit_logs: number;
+    sessions: number;
+  };
 }

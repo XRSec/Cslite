@@ -3,9 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { osBadge, statusBadge } from '../src/components/badges';
+import { commandSourceBadge, commandSourceMeta, healthTimelineHtml, osBadge, statusBadge, uptimeDotsHtml } from '../src/components/badges';
 import { networkBarChartHtml, singleBarChartHtml } from '../src/components/charts';
-import { derivePollHealth } from '../src/views/devices';
+import { paramsFromCreateResponse } from '../src/components/install-modal';
+import { hTr, ipCopyHtml } from '../src/components/ui';
+import { derivePollHealth, derivePollHealthSlots } from '../src/views/devices';
 import {
   applyTheme,
   clearCachedDeployKey,
@@ -14,11 +16,16 @@ import {
   DEPLOY_KEY_STORE,
   getTelemetrySeries,
   loadCachedDeployKey,
+  loadTimezonePref,
   openHostTab,
   pushTelemetrySample,
+  resolveDisplayTimeZone,
   resolveTheme,
   saveCachedDeployKey,
+  setTimezonePref,
   state,
+  syncActiveTimeZone,
+  TIMEZONE_PREF_KEY,
   toggleTheme,
 } from '../src/state';
 import {
@@ -27,6 +34,7 @@ import {
   clampPercent,
   computeDiffLines,
   cronLabel,
+  deviceGroupIds,
   esc,
   formatBytes,
   formatDate,
@@ -34,9 +42,13 @@ import {
   formatMemory,
   formatRelativeTime,
   formatRelativeZh,
+  getActiveTimeZone,
+  isValidTimeZone,
   platformMeta,
+  setActiveTimeZone,
   stripAnsi,
   substituteInstallTokens,
+  TIMEZONE_PRESETS,
 } from '../src/utils';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -80,11 +92,44 @@ describe('web/src/utils', () => {
     expect(formatDuration(undefined)).toBe('--');
   });
 
-  it('formatDate and formatRelativeTime handle valid and invalid dates', () => {
+  it('formatDate, timezone helpers, deviceGroupIds, and formatRelativeTime handle valid and invalid inputs', () => {
     expect(formatDate(null)).toBe('--');
     expect(formatDate('not-a-date')).toBe('--');
     const formatted = formatDate('2026-06-15T10:20:30Z');
     expect(formatted).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+
+    expect(TIMEZONE_PRESETS.some(([z]) => z === 'Asia/Shanghai')).toBe(true);
+    expect(TIMEZONE_PRESETS.some(([z]) => z === 'UTC')).toBe(true);
+    expect(isValidTimeZone('Asia/Shanghai')).toBe(true);
+    expect(isValidTimeZone('UTC')).toBe(true);
+    expect(isValidTimeZone('America/New_York')).toBe(true);
+    expect(isValidTimeZone('')).toBe(false);
+    expect(isValidTimeZone('browser')).toBe(false);
+    expect(isValidTimeZone('Invalid/Nowhere')).toBe(false);
+
+    expect(formatDate('2026-06-15T10:20:30Z', 'UTC')).toBe('2026-06-15 10:20:30');
+    expect(formatDate('2026-06-15T10:20:30Z', 'Asia/Shanghai')).toBe('2026-06-15 18:20:30');
+    expect(formatDate('2026-06-15T10:20:30Z', 'America/New_York')).toBe('2026-06-15 06:20:30');
+    expect(formatDate('2026-01-15T10:20:30Z', 'America/New_York')).toBe('2026-01-15 05:20:30');
+    expect(formatDate('2026-06-15T16:00:00Z', 'Asia/Shanghai')).toBe('2026-06-16 00:00:00');
+
+    try {
+      setActiveTimeZone('Asia/Shanghai');
+      expect(getActiveTimeZone()).toBe('Asia/Shanghai');
+      expect(formatDate('2026-06-15T10:20:30Z')).toBe('2026-06-15 18:20:30');
+      expect(formatDate('2026-06-15T10:20:30Z', 'UTC')).toBe('2026-06-15 10:20:30');
+      setActiveTimeZone('Invalid/Zone');
+      expect(getActiveTimeZone()).toBeNull();
+    } finally {
+      setActiveTimeZone(null);
+      expect(getActiveTimeZone()).toBeNull();
+    }
+
+    expect(deviceGroupIds({})).toEqual([]);
+    expect(deviceGroupIds({ group_id: null })).toEqual([]);
+    expect(deviceGroupIds({ group_id: 'g1' })).toEqual(['g1']);
+    expect(deviceGroupIds({ group_id: 'g1', group_ids: ['g2', 'g1', 'g2', ''] })).toEqual(['g2', 'g1']);
+    expect(deviceGroupIds({ group_ids: ['g3', 'g3'] })).toEqual(['g3']);
 
     const base = Date.parse('2026-06-15T12:00:00Z');
     expect(formatRelativeTime('2026-06-15T11:59:55Z', base)).toBe('just now');
@@ -245,6 +290,63 @@ describe('web/src/utils', () => {
     expect(fullSeries[39].cpu).toBe(44);
   });
 
+  it('Collie timezone preference resolves browser, server, and IANA overrides cleanly', () => {
+    const prevDesc = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+    const prevSys = state.systemInfo;
+    const prevPref = state.timezonePref;
+    const store = new Map<string, string>();
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      writable: true,
+      value: {
+        getItem: (k: string) => store.get(k) ?? null,
+        setItem: (k: string, v: string) => {
+          store.set(k, String(v));
+        },
+        removeItem: (k: string) => {
+          store.delete(k);
+        },
+      },
+    });
+    try {
+      state.systemInfo = {
+        version: '1.0.0',
+        runtime: 'node',
+        db_dialect: 'sqlite',
+        allow_registration: false,
+        heartbeat_interval: 300,
+        poll_interval: 60,
+        timezone: 'Asia/Shanghai',
+        server_time: '2026-06-15T10:20:30Z',
+      };
+      setTimezonePref('server');
+      expect(resolveDisplayTimeZone()).toBe('Asia/Shanghai');
+      expect(syncActiveTimeZone()).toBe('Asia/Shanghai');
+      expect(formatDate('2026-06-15T10:20:30Z')).toBe('2026-06-15 18:20:30');
+
+      setTimezonePref('browser');
+      expect(resolveDisplayTimeZone()).toBeNull();
+      expect(getActiveTimeZone()).toBeNull();
+
+      setTimezonePref('America/New_York');
+      expect(loadTimezonePref()).toBe('America/New_York');
+      expect(resolveDisplayTimeZone()).toBe('America/New_York');
+      expect(formatDate('2026-06-15T10:20:30Z')).toBe('2026-06-15 06:20:30');
+
+      store.set(TIMEZONE_PREF_KEY, 'Invalid/TZ');
+      expect(loadTimezonePref()).toBe('server');
+    } finally {
+      state.systemInfo = prevSys;
+      state.timezonePref = prevPref;
+      setActiveTimeZone(null);
+      if (prevDesc) {
+        Object.defineProperty(globalThis, 'localStorage', prevDesc);
+      } else {
+        delete (globalThis as { localStorage?: unknown }).localStorage;
+      }
+    }
+  });
+
   it('deploy key cache persists per userId and clears cleanly', () => {
     const prevDesc = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
     const store = new Map<string, string>();
@@ -288,6 +390,38 @@ describe('web/src/utils', () => {
     }
   });
 
+  it('deploy key paramsFromCreateResponse forwards bound apiKey and apiKeyPrefix', () => {
+    const params = paramsFromCreateResponse(
+      {
+        id: 'dev_bound_1',
+        name: 'edge-01',
+        platform: 'unix',
+        api_key: 'ak_live_bound_secret',
+        api_key_id: 'key_bound_1',
+        api_key_prefix: 'ak_live_boun...',
+        install_command: 'curl -fsSL https://ctrl.example.com/i | sh -s -- ak_live_bound_secret dev_bound_1',
+        install_commands: {
+          unix: 'curl -fsSL https://ctrl.example.com/i | sh -s -- ak_live_bound_secret dev_bound_1',
+        },
+        expires_at: '2026-12-01T00:00:00Z',
+      },
+      'edge-01',
+      'unix',
+    );
+    expect(params).toEqual({
+      deviceId: 'dev_bound_1',
+      name: 'edge-01',
+      platform: 'unix',
+      apiKey: 'ak_live_bound_secret',
+      apiKeyPrefix: 'ak_live_boun...',
+      installCommand: 'curl -fsSL https://ctrl.example.com/i | sh -s -- ak_live_bound_secret dev_bound_1',
+      installCommands: {
+        unix: 'curl -fsSL https://ctrl.example.com/i | sh -s -- ak_live_bound_secret dev_bound_1',
+      },
+      expiresAt: '2026-12-01T00:00:00Z',
+    });
+  });
+
   it('Collie chart and badge renderers produce 40-bar SVG and escape XSS payloads', () => {
     const samples = getTelemetrySeries('dev_chart_test', {
       cpu_usage: 55,
@@ -308,6 +442,15 @@ describe('web/src/utils', () => {
 
     expect(osBadge('openwrt')).toContain('os-openwrt');
     expect(statusBadge('<script>')).toContain('&lt;script&gt;');
+
+    expect(commandSourceMeta('cron', 'nightly')).toMatchObject({ label: 'Cron 周期' });
+    expect(commandSourceMeta('once', 'oneoff')).toMatchObject({ label: '一次性预约' });
+    expect(commandSourceMeta('immediate', 'quick: ls')).toMatchObject({ label: '在线终端' });
+    expect(commandSourceMeta('immediate', 'fleet: df -h')).toMatchObject({ label: '批量执行' });
+    expect(commandSourceMeta('immediate', 'health-probe: router')).toMatchObject({ label: '健康检测' });
+    expect(commandSourceMeta('immediate', 'diag-net: router')).toMatchObject({ label: '系统诊断' });
+    expect(commandSourceMeta('immediate', 'custom')).toMatchObject({ label: '即时指令' });
+    expect(commandSourceBadge('cron', 'test')).toContain('Cron 周期');
   });
 
   it('derivePollHealth aligns passive polling activity thresholds cleanly', () => {
@@ -327,6 +470,168 @@ describe('web/src/utils', () => {
     const offline = derivePollHealth({ status: 'offline', last_seen: '2026-06-15T11:59:59Z' }, now);
     expect(offline).toMatchObject({ score: 0, label: '离线 · 无轮询请求', tone: 'err' });
   });
+
+  it('derivePollHealthSlots and uptimeDotsHtml render N-capsule Uptime-style strips', () => {
+    const now = Date.parse('2026-06-15T12:00:00Z');
+
+    const fresh = derivePollHealthSlots(
+      { status: 'online', last_seen: '2026-06-15T11:59:30Z', created_at: '2026-06-15T11:57:30Z' },
+      12,
+      now,
+    );
+    expect(fresh).toHaveLength(12);
+    expect(fresh.slice(0, 9).every((s) => s === 'empty')).toBe(true);
+    expect(fresh.slice(9).every((s) => s === 'ok')).toBe(true);
+
+    const full24 = derivePollHealthSlots(
+      { status: 'online', last_seen: '2026-06-15T11:59:45Z', created_at: '2026-06-15T10:00:00Z' },
+      24,
+      now,
+    );
+    expect(full24).toHaveLength(24);
+    expect(full24.every((s) => s === 'ok')).toBe(true);
+
+    const delayed = derivePollHealthSlots(
+      { status: 'online', last_seen: '2026-06-15T11:57:00Z' },
+      12,
+      now,
+    );
+    expect(delayed.slice(0, 10).every((s) => s === 'ok')).toBe(true);
+    expect(delayed.slice(10).every((s) => s === 'warn')).toBe(true);
+
+    const offSeen = derivePollHealthSlots(
+      { status: 'offline', last_seen: '2026-06-15T11:57:30Z' },
+      12,
+      now,
+    );
+    expect(offSeen.slice(0, 9).every((s) => s === 'ok')).toBe(true);
+    expect(offSeen.slice(9).every((s) => s === 'err')).toBe(true);
+
+    const offNever = derivePollHealthSlots({ status: 'offline', last_seen: '' }, 12, now);
+    expect(offNever).toHaveLength(12);
+    expect(offNever.every((s) => s === 'empty')).toBe(true);
+
+    const strip12 = uptimeDotsHtml(delayed, { label: '状态 <script>' });
+    expect((strip12.match(/class="up-dot /g) ?? []).length).toBe(12);
+    expect(strip12).toContain('role="img"');
+    expect(strip12).toContain('aria-label="状态 &lt;script&gt;"');
+
+    const strip24 = uptimeDotsHtml(full24, { lg: true, label: '近24分钟' });
+    expect((strip24.match(/class="up-dot /g) ?? []).length).toBe(24);
+    expect(strip24).toContain('up-strip up-lg');
+  });
+
+  it('derivePollHealth and derivePollHealthSlots adapt thresholds to server poll/heartbeat schedule', () => {
+    const now = Date.parse('2026-06-15T12:00:00Z');
+    const seen400sAgo = '2026-06-15T11:53:20Z';
+    const seen900sAgo = '2026-06-15T11:45:00Z';
+
+    // Under 1m/5m (60s/300s), 400s stale is err
+    expect(
+      derivePollHealth({ status: 'online', last_seen: seen400sAgo }, now, { pollInterval: 60, heartbeatInterval: 300 }),
+    ).toMatchObject({ tone: 'err', score: 25 });
+
+    // Under 5m/15m (300s/900s), 400s stale is still healthy (< 465s), and 900s is warn
+    expect(
+      derivePollHealth({ status: 'online', last_seen: seen400sAgo }, now, { pollInterval: 300, heartbeatInterval: 900 }),
+    ).toMatchObject({ tone: 'ok', score: 100 });
+    expect(
+      derivePollHealth({ status: 'online', last_seen: seen900sAgo }, now, { pollInterval: 300, heartbeatInterval: 900 }),
+    ).toMatchObject({ tone: 'warn', score: 65 });
+
+    const slots5m = derivePollHealthSlots({ status: 'online', last_seen: seen400sAgo }, 12, now, 300);
+    expect(slots5m.every((s) => s === 'ok')).toBe(true);
+
+    const dots5m = uptimeDotsHtml(slots5m, { windowSec: 300 });
+    expect(dots5m).toContain('约 5 分钟前');
+    expect(dots5m).toContain('约 55 分钟前');
+
+    // Asymmetric 1m/10m (60s/600s): 350s stale must stay 'warn' in both derivePollHealth and derivePollHealthSlots
+    const seen350sAgo = '2026-06-15T11:54:10Z';
+    expect(
+      derivePollHealth({ status: 'online', last_seen: seen350sAgo }, now, { pollInterval: 60, heartbeatInterval: 600 }),
+    ).toMatchObject({ tone: 'warn', score: 65 });
+    const slotsAsym = derivePollHealthSlots({ status: 'online', last_seen: seen350sAgo }, 12, now, 60, 600);
+    expect(slotsAsym.includes('err')).toBe(false);
+    expect(slotsAsym.at(-1)).toBe('warn');
+
+    // Shorter custom heartbeat (60s/180s): 250s stale must be 'err' in BOTH derivePollHealth and derivePollHealthSlots
+    const seen250sAgo = '2026-06-15T11:55:50Z';
+    expect(
+      derivePollHealth({ status: 'online', last_seen: seen250sAgo }, now, { pollInterval: 60, heartbeatInterval: 180 }),
+    ).toMatchObject({ tone: 'err', score: 25 });
+    const slotsShortHb = derivePollHealthSlots({ status: 'online', last_seen: seen250sAgo }, 12, now, 60, 180);
+    expect(slotsShortHb.at(-1)).toBe('err');
+  });
+
+  it('hTr inherits data-lbl for string and 2-tuple cells while honoring 3-tuple overrides and suppression', () => {
+    const labels = ['状态', '主机', '输出', '操作 "X"', ''];
+    const html = hTr(
+      [
+        '<span>online</span>',
+        ['node-01', 'nw'],
+        ['hidden-label', 'txs', ''],
+        ['custom', 'mono', '自定义 <标签>'],
+        ['<button>详情</button>', 'tr'],
+      ],
+      labels,
+    );
+
+    expect(html).toBe(
+      '<tr>' +
+        '<td data-lbl="状态"><span>online</span></td>' +
+        '<td class="nw" data-lbl="主机">node-01</td>' +
+        '<td class="txs">hidden-label</td>' +
+        '<td class="mono" data-lbl="自定义 &lt;标签&gt;">custom</td>' +
+        '<td class="tr"><button>详情</button></td>' +
+        '</tr>',
+    );
+    expect(hTr(['plain', ['styled', 'cls']])).toBe('<tr><td>plain</td><td class="cls">styled</td></tr>');
+  });
+
+  it('ipCopyHtml and healthTimelineHtml render direct copy targets and timeline tooltips with XSS escaping', () => {
+    expect(ipCopyHtml('')).toBe('<span class="mut">—</span>');
+    expect(ipCopyHtml('—')).toBe('<span class="mut">—</span>');
+    const ipv6 = '2001:db8:85a3::8a2e:370:7334" onclick="xss()';
+    const ipBtn = ipCopyHtml(ipv6, 'tsm');
+    expect(ipBtn).toContain('class="ip-t ip-cp mono tsm"');
+    expect(ipBtn).toContain('data-copy-ip="2001:db8:85a3::8a2e:370:7334&quot; onclick=&quot;xss()"');
+    expect(ipBtn).not.toContain('onclick="xss()"');
+
+    const tl = healthTimelineHtml(
+      [
+        {
+          start: '2026-11-28T00:00:00Z',
+          end: '2026-11-28T01:00:00Z',
+          label: '08:00',
+          status: 'ok',
+          uptime_pct: 100,
+          online_devices: 2,
+          healthy_devices: 2,
+          total_devices: 2,
+          samples: 10,
+          expected: 10,
+        },
+        {
+          start: '2026-11-28T01:00:00Z',
+          end: '2026-11-28T02:00:00Z',
+          label: '09:00',
+          status: 'warn',
+          uptime_pct: 50,
+          online_devices: 1,
+          healthy_devices: 1,
+          total_devices: 2,
+          samples: 5,
+          expected: 10,
+        },
+      ],
+      { fleet: true, leftAxis: '08:00', centerAxis: '近 24 小时 <script>', rightAxis: '当前', label: '集群健康' },
+    );
+    expect(tl).toContain('class="up-wrap"');
+    expect(tl).toContain('data-up-tip="08:00 · 正常 · 可用率 100.0% · 2/2 在线 · 10/10 心跳"');
+    expect(tl).toContain('data-up-tip="09:00 · 波动 · 可用率 50.0% · 1/2 在线 · 5/10 心跳"');
+    expect(tl).toContain('&lt;script&gt;');
+  });
 });
 
 describe('build artifacts', () => {
@@ -342,19 +647,55 @@ describe('build artifacts', () => {
     const html = fs.readFileSync(htmlPath, 'utf8');
     const sizeBytes = Buffer.byteLength(html, 'utf8');
 
-    expect(html).toContain('<title>Cslite');
+    expect(html).toContain('<title>CSLite');
+    expect(html).toContain('CSLite');
+    expect(html).not.toContain('>Cslite<');
+    expect(html).not.toContain('Cslite · ');
     expect(html).toContain('OpenWrt without curl?');
     expect(html).toContain('ssh root@router');
     expect(html).toContain('轮询健康值');
     expect(html).toContain('最近轮询请求');
     expect(html).toContain('健康检测');
     expect(html).toContain('检测上线状态');
-    expect(html).toContain('已智能填充');
-    expect(html).toContain('#111936');
-    expect(html).toContain('#7267EF');
-    expect(html).toContain('#02BFA5');
-    expect(html).toContain('#F4F6F8');
-    expect(html).toContain('#7635DC');
+    expect(html).not.toContain('选择 API Key');
+    expect(html).not.toContain('inst-key-pick');
+    expect(html).not.toContain('更换 / 自定义密钥');
+    expect(html).not.toContain('已智能填充');
+    expect(html).toContain('单机绑定');
+    expect(html).toContain('轮换密钥');
+    expect(html).toContain('终端与即时指令');
+    expect(html).toContain('健康日志');
+    expect(html).toContain('定时任务日志');
+    expect(html).toContain('全部定时任务');
+    expect(html).toContain('系统时区');
+    expect(html).toContain('.ip-t');
+    expect(html).toContain('.exp-b');
+    expect(html).toContain('.csel-pop');
+    expect(html).toContain('.ip-modal-list');
+    expect(html).toContain('.col-pick');
+    expect(html).toContain('scrollbar-gutter:stable');
+    expect(html).toContain('tbl-slim');
+    expect(html).toContain('表头');
+    expect(html).toContain('清理日志');
+    expect(html).toContain('展开全部');
+    expect(html).toContain('自定义设置');
+    expect(html).toContain('心跳健康上报');
+    expect(html).toContain('条/页');
+    expect(html).toContain('升级探针');
+    expect(html).toContain('position:fixed');
+    expect(html).toContain('data-copy-ip');
+    expect(html).toContain('health-history');
+    expect(html).toContain('#111110');
+    expect(html).toContain('#f9f9f7');
+    expect(html).toContain('#c6613f');
+    expect(html).toContain('#d97757');
+    expect(html).toContain('#184f95');
+    expect(html).toContain('#6da7ec');
+    expect(html).toContain('#0d0d0c');
+    expect(html).not.toContain('#111936');
+    expect(html).not.toContain('#7267EF');
+    expect(html).not.toContain('#7635DC');
+    expect(html).not.toContain('#F4F6F8');
     expect(html).not.toMatch(/<script\b[^>]*\bsrc\s*=/i);
     expect(html).not.toMatch(/<link\b[^>]*\brel\s*=\s*["']?stylesheet/i);
     expect(html).not.toMatch(/https?:\/\/[^"'\s>]+(?:fonts\.googleapis|cdn\.|unpkg|jsdelivr)/i);
@@ -365,7 +706,7 @@ describe('build artifacts', () => {
     expect(scriptBody).not.toMatch(/<\/script/i);
     expect(scriptBody).not.toContain('<!--');
 
-    expect(sizeBytes).toBeLessThan(130 * 1024);
+    expect(sizeBytes).toBeLessThan(190 * 1024);
 
     const mod = (await import('../../server/src/ui-bundle')) as { UI_HTML: string };
     expect(mod.UI_HTML).toBe(html);
@@ -380,12 +721,21 @@ describe('build artifacts', () => {
     expect(scriptsMod.INSTALL_ANDROID_SH).toBe(
       fs.readFileSync(path.join(rootDir, 'agent/scripts/install-android.sh'), 'utf8'),
     );
+    expect(scriptsMod.UPGRADE_UNIX_SH).toBe(
+      fs.readFileSync(path.join(rootDir, 'agent/scripts/upgrade.sh'), 'utf8'),
+    );
+    expect(scriptsMod.UPGRADE_WINDOWS_PS1).toBe(
+      fs.readFileSync(path.join(rootDir, 'agent/scripts/upgrade.ps1'), 'utf8'),
+    );
+    const agentVer = fs.readFileSync(path.join(rootDir, 'agent/VERSION'), 'utf8').trim();
     expect(scriptsMod.AGENT_LITE_SH).toBe(
       fs.readFileSync(path.join(rootDir, 'agent/openwrt/cslite-agent-lite.sh'), 'utf8'),
     );
+    expect(scriptsMod.AGENT_LITE_SH).toContain(`VERSION="${agentVer}"`);
     expect(scriptsMod.AGENT_LITE_PS1).toBe(
       fs.readFileSync(path.join(rootDir, 'agent/scripts/cslite-agent-lite.ps1'), 'utf8'),
     );
+    expect(scriptsMod.AGENT_LITE_PS1).toContain(`$Version = "${agentVer}"`);
     expect(scriptsMod.OPENWRT_INIT_SH).toBe(
       fs.readFileSync(path.join(rootDir, 'agent/openwrt/cslite-agent.init'), 'utf8'),
     );

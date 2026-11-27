@@ -36,7 +36,8 @@ jobs:
             RAW_VERSION="${{ github.ref_name }}"
           else
             RAW_VERSION="${{ inputs.version }}"
-            [ -n "$RAW_VERSION" ] || RAW_VERSION="v1.0.0"
+            [ -n "$RAW_VERSION" ] || RAW_VERSION="$(cat agent/VERSION 2>/dev/null | tr -d '[:space:]' || echo v1.2.0)"
+            [ -n "$RAW_VERSION" ] || RAW_VERSION="v1.2.0"
           fi
           case "$RAW_VERSION" in
             v*) VERSION="$RAW_VERSION" ;;
@@ -58,19 +59,29 @@ jobs:
           mkdir -p dist/release
           LDFLAGS="-s -w -X main.Version=${VERSION}"
           cd agent
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="$LDFLAGS" -o ../dist/release/cslite-agent-linux-amd64 .
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="$LDFLAGS" -o ../dist/release/cslite-agent-linux-arm64 .
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -ldflags="$LDFLAGS" -o ../dist/release/cslite-agent-linux-armv7 .
-          CGO_ENABLED=0 GOOS=linux GOARCH=mips GOMIPS=softfloat go build -trimpath -ldflags="$LDFLAGS" -o ../dist/release/cslite-agent-linux-mips .
-          CGO_ENABLED=0 GOOS=linux GOARCH=mipsle GOMIPS=softfloat go build -trimpath -ldflags="$LDFLAGS" -o ../dist/release/cslite-agent-linux-mipsle .
-          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags="$LDFLAGS" -o ../dist/release/cslite-agent-darwin-amd64 .
-          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags="$LDFLAGS" -o ../dist/release/cslite-agent-darwin-arm64 .
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="$LDFLAGS" -o ../dist/release/cslite-agent-windows-amd64.exe .
-          CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -trimpath -ldflags="$LDFLAGS" -o ../dist/release/cslite-agent-windows-arm64.exe .
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags nethttpomithttp2 -trimpath -ldflags="$LDFLAGS" -o ../dist/release/cslite-agent-linux-amd64 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -tags nethttpomithttp2 -trimpath -ldflags="$LDFLAGS" -o ../dist/release/cslite-agent-linux-arm64 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -tags nethttpomithttp2 -trimpath -ldflags="$LDFLAGS" -o ../dist/release/cslite-agent-linux-armv7 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=mips GOMIPS=softfloat go build -tags nethttpomithttp2 -trimpath -ldflags="$LDFLAGS" -o ../dist/release/cslite-agent-linux-mips .
+          CGO_ENABLED=0 GOOS=linux GOARCH=mipsle GOMIPS=softfloat go build -tags nethttpomithttp2 -trimpath -ldflags="$LDFLAGS" -o ../dist/release/cslite-agent-linux-mipsle .
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -tags nethttpomithttp2 -trimpath -ldflags="$LDFLAGS" -o ../dist/release/cslite-agent-darwin-amd64 .
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -tags nethttpomithttp2 -trimpath -ldflags="$LDFLAGS" -o ../dist/release/cslite-agent-darwin-arm64 .
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -tags nethttpomithttp2 -trimpath -ldflags="$LDFLAGS" -o ../dist/release/cslite-agent-windows-amd64.exe .
+          CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -tags nethttpomithttp2 -trimpath -ldflags="$LDFLAGS" -o ../dist/release/cslite-agent-windows-arm64.exe .
+
+      - name: Compress Linux binaries with UPX
+        shell: bash
+        run: |
+          sudo apt-get update && sudo apt-get install -y upx-ucl
+          for f in dist/release/cslite-agent-linux-*; do
+            [ -f "$f" ] || continue
+            upx --best --lzma "$f" || upx -9 "$f" || true
+          done
 
       - name: Build OpenWrt lite package and checksums
         shell: bash
         run: |
+          cat agent/openwrt/lite/[0-9]*.sh > agent/openwrt/cslite-agent-lite.sh
           sh agent/openwrt/build-ipk.sh --lite --version "${IPK_VERSION}" --out "dist/release/cslite-agent-lite_${IPK_VERSION}_all.ipk"
           (cd dist/release && sha256sum cslite-agent-* > SHA256SUMS.txt)
           ls -lh dist/release

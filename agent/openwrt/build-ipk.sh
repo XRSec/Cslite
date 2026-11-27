@@ -9,7 +9,11 @@ AGENT_DIR="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"
 
 MODE="full"
 PKG_ARCH=""
-VERSION="1.0.0"
+VERSION=""
+if [ -f "$AGENT_DIR/VERSION" ]; then
+	VERSION="$(tr -d '[:space:]' < "$AGENT_DIR/VERSION" 2>/dev/null || true)"
+fi
+[ -n "$VERSION" ] || VERSION="1.2.0"
 BIN_PATH=""
 OUT_PATH=""
 
@@ -78,7 +82,14 @@ chmod 0600 "$DATA_DIR/etc/config/cslite-agent"
 chmod 0755 "$DATA_DIR/etc/cslite-agent"
 
 if [ "$MODE" = "lite" ]; then
-	cp "$SCRIPT_DIR/cslite-agent-lite.sh" "$DATA_DIR/usr/bin/cslite-agent-lite"
+	if [ -d "$SCRIPT_DIR/lite" ]; then
+		cat "$SCRIPT_DIR"/lite/[0-9]*.sh > "$DATA_DIR/usr/bin/cslite-agent-lite"
+	else
+		cp "$SCRIPT_DIR/cslite-agent-lite.sh" "$DATA_DIR/usr/bin/cslite-agent-lite"
+	fi
+	awk -v ver="v${VERSION}" 'BEGIN{done=0} !done && /^VERSION="/{print "VERSION=\"" ver "\""; done=1; next} {print}' \
+		"$DATA_DIR/usr/bin/cslite-agent-lite" > "$DATA_DIR/usr/bin/cslite-agent-lite.tmp"
+	mv "$DATA_DIR/usr/bin/cslite-agent-lite.tmp" "$DATA_DIR/usr/bin/cslite-agent-lite"
 	chmod 0755 "$DATA_DIR/usr/bin/cslite-agent-lite"
 	DEPENDS="+ca-bundle"
 	DESC="Cslite ultra-lightweight BusyBox POSIX shell command agent"

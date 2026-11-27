@@ -1,6 +1,8 @@
 #!/bin/sh
-# Universal POSIX/BusyBox Auto-Detect Installer for Cslite Agent (Linux, OpenWrt, macOS, Android)
-# Works cleanly when piped via: curl -fsSL .../i | sh -s -- <api_key> [device_id]
+# Purpose: Auto-detecting POSIX/BusyBox installer for CSLite Agent (Linux, OpenWrt, macOS, Android).
+# Context: Served at /i and /install.sh; assembled cleanly from agent/scripts/install/*.sh.
+# Usage: curl -fsSL .../i | sh -s -- <api_key> [device_id] [name]
+# Requires: POSIX sh and curl, wget, uclient-fetch, or openssl.
 
 set -eu
 
@@ -355,8 +357,12 @@ resolve_redirect_url() {
 }
 
 write_http_get() {
-	printf 'GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: cslite-installer\r\nAccept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n' \
-		"$1" "$2"
+	req_path="$1"
+	host_hdr="$2"
+	req_ref="${3:-}"
+	printf 'GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: CSLite-Installer/1.0\r\n' "$req_path" "$host_hdr"
+	[ -n "$req_ref" ] && printf 'Referer: %s\r\n' "$req_ref"
+	printf 'Accept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n'
 }
 
 openssl_fetch() {
@@ -371,6 +377,12 @@ openssl_fetch() {
 		fi
 		raw_f="${dest}.raw.$$"
 		rm -f "$raw_f" "$dest"
+		ref_hdr=""
+		if [ -n "${SERVER_BASE:-}" ]; then
+			case "$cur_url" in
+				"${SERVER_BASE}/"*) ref_hdr="${SERVER_BASE}/install" ;;
+			esac
+		fi
 
 		echo "Fetching ${cur_url} via ${ossl_bin}..." >&2
 		trc=0
@@ -379,7 +391,7 @@ openssl_fetch() {
 			case "$connect_host" in
 				*:*) connect_host="[${connect_host}]" ;;
 			esac
-			write_http_get "$URL_PATH" "$URL_HOST_HDR" | \
+			write_http_get "$URL_PATH" "$URL_HOST_HDR" "$ref_hdr" | \
 				"$ossl_bin" s_client -quiet -ign_eof -connect "${connect_host}:${URL_PORT}" -servername "$URL_HOST" >"$raw_f" 2>/dev/null || trc=$?
 		elif [ "$URL_SCHEME" = "http" ]; then
 			nc_bin=""
@@ -394,7 +406,7 @@ openssl_fetch() {
 				rm -f "$raw_f"
 				return 1
 			fi
-			write_http_get "$URL_PATH" "$URL_HOST_HDR" | \
+			write_http_get "$URL_PATH" "$URL_HOST_HDR" "$ref_hdr" | \
 				"$nc_bin" "$URL_HOST" "$URL_PORT" >"$raw_f" 2>/dev/null || trc=$?
 		else
 			rm -f "$raw_f"
@@ -587,6 +599,20 @@ probe_wget_timeout_flags() {
 	printf '%s:%s' "$has_T" "$has_t"
 }
 
+probe_wget_has_header() {
+	bin="$1"
+	subcmd="${2:-}"
+	if [ -n "$subcmd" ]; then
+		help_out="$("$bin" "$subcmd" --help </dev/null 2>&1 || true)"
+	else
+		help_out="$("$bin" --help </dev/null 2>&1 || true)"
+	fi
+	case "$help_out" in
+		*--header*) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
 fetch_file() {
 	src="$1"
 	dest="$2"
@@ -604,6 +630,13 @@ fetch_file() {
 		return $?
 	fi
 
+	ref_hdr=""
+	if [ -n "${SERVER_BASE:-}" ]; then
+		case "$src" in
+			"${SERVER_BASE}/"*) ref_hdr="${SERVER_BASE}/install" ;;
+		esac
+	fi
+
 	wget_timeout=""
 	if [ -n "$timeout_sec" ]; then
 		wget_timeout="$timeout_sec"
@@ -613,11 +646,10 @@ fetch_file() {
 	rc=0
 	case "$tool" in
 		curl|/system/bin/curl)
-			if [ -n "$timeout_sec" ]; then
-				"$tool" -fsSL --connect-timeout 6 -m "$timeout_sec" -o "$dest" "$src" || rc=$?
-			else
-				"$tool" -fsSL -o "$dest" "$src" || rc=$?
-			fi
+			set -- -fsSL -A "CSLite-Installer/1.0"
+			[ -n "$ref_hdr" ] && set -- "$@" -H "Referer: $ref_hdr"
+			[ -n "$timeout_sec" ] && set -- "$@" --connect-timeout 6 -m "$timeout_sec"
+			"$tool" "$@" -o "$dest" "$src" || rc=$?
 			return "$rc"
 			;;
 		openssl|/usr/bin/openssl|*/openssl)
@@ -625,27 +657,31 @@ fetch_file() {
 			return "$rc"
 			;;
 		wget|/system/bin/wget|uclient-fetch)
+			set -- -q
 			if [ -n "$wget_timeout" ]; then
 				flags_spec="$(probe_wget_timeout_flags "$tool")"
-				set -- -q
 				[ "${flags_spec%%:*}" = "1" ] && set -- "$@" -T "$wget_timeout"
 				[ "${flags_spec#*:}" = "1" ] && set -- "$@" -t 1
-				"$tool" "$@" -O "$dest" "$src" || rc=$?
-			else
-				"$tool" -q -O "$dest" "$src" || rc=$?
 			fi
+			if probe_wget_has_header "$tool"; then
+				set -- "$@" --header="User-Agent: CSLite-Installer/1.0"
+				[ -n "$ref_hdr" ] && set -- "$@" --header="Referer: $ref_hdr"
+			fi
+			"$tool" "$@" -O "$dest" "$src" || rc=$?
 			;;
 		busybox:*)
 			bb="${tool#busybox:}"
+			set -- wget -q
 			if [ -n "$wget_timeout" ]; then
 				flags_spec="$(probe_wget_timeout_flags "$bb" wget)"
-				set -- wget -q
 				[ "${flags_spec%%:*}" = "1" ] && set -- "$@" -T "$wget_timeout"
 				[ "${flags_spec#*:}" = "1" ] && set -- "$@" -t 1
-				"$bb" "$@" -O "$dest" "$src" || rc=$?
-			else
-				"$bb" wget -q -O "$dest" "$src" || rc=$?
 			fi
+			if probe_wget_has_header "$bb" wget; then
+				set -- "$@" --header="User-Agent: CSLite-Installer/1.0"
+				[ -n "$ref_hdr" ] && set -- "$@" --header="Referer: $ref_hdr"
+			fi
+			"$bb" "$@" -O "$dest" "$src" || rc=$?
 			;;
 		*) return 1 ;;
 	esac
@@ -1062,14 +1098,79 @@ start_nohup_fallback() {
 	stop_pid_file "$lite_pid_file"
 
 	export CSLITE_CONFIG_DIR="$cfg_dir"
-	if [ "$is_lite" -eq 1 ]; then
-		nohup "$sh_bin" "$bin_path" run --config "$cfg_file" >"$log_file" 2>&1 </dev/null &
+	if command -v nohup >/dev/null 2>&1; then
+		if [ "$is_lite" -eq 1 ]; then
+			nohup "$sh_bin" "$bin_path" run --config "$cfg_file" >"$log_file" 2>&1 </dev/null &
+		else
+			nohup "$bin_path" run --config "$cfg_file" >"$log_file" 2>&1 </dev/null &
+		fi
 	else
-		nohup "$bin_path" run --config "$cfg_file" >"$log_file" 2>&1 </dev/null &
+		if [ "$is_lite" -eq 1 ]; then
+			( trap '' HUP; exec "$sh_bin" "$bin_path" run --config "$cfg_file" ) >"$log_file" 2>&1 </dev/null &
+		else
+			( trap '' HUP; exec "$bin_path" run --config "$cfg_file" ) >"$log_file" 2>&1 </dev/null &
+		fi
 	fi
 	ag_pid=$!
 	printf '%s\n' "$ag_pid" > "$pid_file"
 	echo "Started cslite-agent in background (pid=${ag_pid}, log=${log_file})"
+}
+
+is_openrc() {
+	command -v rc-service >/dev/null 2>&1 || return 1
+	command -v openrc-run >/dev/null 2>&1 || [ -x /sbin/openrc-run ]
+}
+
+openrc_shell_quote() {
+	printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
+install_openrc_service() {
+	bin_path="$1"
+	cfg_dir="$2"
+	cfg_file="$3"
+	is_lite="$4"
+	sh_bin="$5"
+	root_pfx="${CSLITE_OPENRC_ROOT:-}"
+	init_dir="${root_pfx}/etc/init.d"
+	init_path="${init_dir}/cslite-agent"
+	log_file="${cfg_dir}/cslite-agent.log"
+	mkdir -p "$init_dir" "$cfg_dir"
+	if [ "$is_lite" -eq 1 ]; then
+		cmd_exec="$sh_bin"
+		cmd_args_inner="$(openrc_shell_quote "$bin_path") run --config $(openrc_shell_quote "$cfg_file")"
+	else
+		cmd_exec="$bin_path"
+		cmd_args_inner="run --config $(openrc_shell_quote "$cfg_file")"
+	fi
+	cmd_exec_q="$(openrc_shell_quote "$cmd_exec")"
+	cmd_args_q="$(openrc_shell_quote "$cmd_args_inner")"
+	log_file_q="$(openrc_shell_quote "$log_file")"
+	cat > "${init_path}.tmp.$$" <<EOF
+#!/sbin/openrc-run
+# CSLite Agent OpenRC init script
+
+name="cslite-agent"
+description="CSLite Cross-Platform Agent"
+command=${cmd_exec_q}
+command_args=${cmd_args_q}
+command_background="yes"
+pidfile="/run/cslite-agent.pid"
+output_log=${log_file_q}
+error_log=${log_file_q}
+
+depend() {
+	need net
+	after firewall
+}
+EOF
+	chmod 0755 "${init_path}.tmp.$$"
+	mv "${init_path}.tmp.$$" "$init_path"
+	if command -v rc-update >/dev/null 2>&1; then
+		rc-update add cslite-agent default >/dev/null 2>&1 || true
+	fi
+	rc-service cslite-agent restart || rc-service cslite-agent start
+	echo "Installed and started OpenRC service cslite-agent (${bin_path})"
 }
 
 OS="$(detect_os)"
@@ -1205,6 +1306,20 @@ fi
 
 if [ "$INSTALLED_MODE" = "full" ]; then
 	if [ "$OS" = "linux" ] && [ ! -d /run/systemd/system ] && ! command -v systemctl >/dev/null 2>&1; then
+		set -- install --server "$SERVER" --key "$API_KEY"
+		[ -n "$DEVICE_NAME" ] && set -- "$@" --name "$DEVICE_NAME"
+		[ -n "$DEVICE_ID" ] && set -- "$@" --device-id "$DEVICE_ID"
+		[ -n "$POLL_INTERVAL" ] && set -- "$@" --poll "$POLL_INTERVAL"
+		[ -n "$HEARTBEAT_INTERVAL" ] && set -- "$@" --heartbeat "$HEARTBEAT_INTERVAL"
+		[ "$USER_MODE" -eq 1 ] && set -- "$@" --user
+		if is_openrc && [ "$USER_MODE" -eq 0 ]; then
+			if "$INSTALL_BIN" "$@"; then
+				exit 0
+			fi
+			write_config_json "$CFG_FILE"
+			install_openrc_service "$INSTALL_BIN" "$CFG_DIR" "$CFG_FILE" 0 "$SH_BIN"
+			exit 0
+		fi
 		write_config_json "$CFG_FILE"
 		start_nohup_fallback "$INSTALL_BIN" "$CFG_DIR" "$CFG_FILE" 0 "$SH_BIN"
 		exit 0
@@ -1288,7 +1403,7 @@ WantedBy=${WANTED_BY}
 EOF
 			mv "${UNIT_PATH}.tmp.$$" "$UNIT_PATH"
 			if [ "$USER_MODE" -eq 1 ]; then
-				if systemctl --user daemon-reload && systemctl --user enable --now cslite-agent; then
+				if systemctl --user daemon-reload && systemctl --user enable cslite-agent && systemctl --user restart cslite-agent; then
 					echo "Installed and started user systemd service cslite-agent (${INSTALL_BIN})"
 					exit 0
 				fi
@@ -1296,9 +1411,12 @@ EOF
 				start_nohup_fallback "$INSTALL_BIN" "$CFG_DIR" "$CFG_FILE" 1 "$SH_BIN"
 			else
 				systemctl daemon-reload
-				systemctl enable --now cslite-agent
+				systemctl enable cslite-agent
+				systemctl restart cslite-agent
 				echo "Installed and started systemd service cslite-agent (${INSTALL_BIN})"
 			fi
+		elif is_openrc && [ "$USER_MODE" -eq 0 ]; then
+			install_openrc_service "$INSTALL_BIN" "$CFG_DIR" "$CFG_FILE" 1 "$SH_BIN"
 		else
 			start_nohup_fallback "$INSTALL_BIN" "$CFG_DIR" "$CFG_FILE" 1 "$SH_BIN"
 		fi

@@ -32,6 +32,8 @@ type Config struct {
 	APIKey            string `json:"api_key"`
 	Name              string `json:"name,omitempty"`
 	DeviceID          string `json:"device_id,omitempty"`
+	UserAgent         string `json:"user_agent,omitempty"`
+	Referer           string `json:"referer,omitempty"`
 	PollInterval      int    `json:"poll_interval"`
 	HeartbeatInterval int    `json:"heartbeat_interval"`
 	LogLevel          string `json:"log_level"`
@@ -52,6 +54,8 @@ type Overrides struct {
 	APIKey            string
 	Name              string
 	DeviceID          string
+	UserAgent         string
+	Referer           string
 	ConfigFile        string
 	PollInterval      int
 	HeartbeatInterval int
@@ -130,6 +134,12 @@ func Load(ov Overrides) (*Config, error) {
 	if d := strings.TrimSpace(ov.DeviceID); d != "" {
 		cfg.DeviceID = d
 	}
+	if ua := strings.TrimSpace(ov.UserAgent); ua != "" {
+		cfg.UserAgent = ua
+	}
+	if ref := strings.TrimSpace(ov.Referer); ref != "" {
+		cfg.Referer = ref
+	}
 	if ov.PollInterval > 0 {
 		cfg.PollInterval = ov.PollInterval
 		cfg.ExplicitPoll = true
@@ -179,6 +189,12 @@ func loadFromFile(path string, cfg *Config) error {
 		}
 		if fc.DeviceID != "" {
 			cfg.DeviceID = strings.TrimSpace(fc.DeviceID)
+		}
+		if fc.UserAgent != "" {
+			cfg.UserAgent = strings.TrimSpace(fc.UserAgent)
+		}
+		if fc.Referer != "" {
+			cfg.Referer = strings.TrimSpace(fc.Referer)
 		}
 		if fc.PollInterval > 0 {
 			cfg.PollInterval = fc.PollInterval
@@ -243,6 +259,12 @@ func applyEnv(cfg *Config, getenv func(string) string) {
 	}
 	if v := firstNonEmpty(getenv, "CSLITE_DEVICE_ID", "AGENT_DEVICE_ID"); v != "" {
 		cfg.DeviceID = v
+	}
+	if v := firstNonEmpty(getenv, "CSLITE_USER_AGENT"); v != "" {
+		cfg.UserAgent = v
+	}
+	if v := firstNonEmpty(getenv, "CSLITE_REFERER"); v != "" {
+		cfg.Referer = v
 	}
 	if v := firstNonEmpty(getenv, "CSLITE_POLL_INTERVAL"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -360,6 +382,10 @@ func SetKey(path, key, value string) (*Config, error) {
 		cfg.Name = strings.TrimSpace(value)
 	case "device_id":
 		cfg.DeviceID = strings.TrimSpace(value)
+	case "user_agent":
+		cfg.UserAgent = strings.TrimSpace(value)
+	case "referer":
+		cfg.Referer = strings.TrimSpace(value)
 	case "poll_interval":
 		n, err := strconv.Atoi(strings.TrimSpace(value))
 		if err != nil || n <= 0 {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -62,6 +63,8 @@ type Agent struct {
 	fastPollUntil time.Time
 	pollWakeCh    chan struct{}
 
+	// Lock order: metricsSyncMu -> regMu -> idMu / intervalMu.
+	metricsSyncMu     sync.Mutex
 	lastMetricsSyncNs atomic.Int64
 }
 
@@ -77,7 +80,7 @@ func New(cfg *config.Config, opts ...Options) (*Agent, error) {
 
 	version := opt.Version
 	if version == "" {
-		version = "v1.0.0"
+		version = "v1.2.0"
 	}
 	maxWorkers := opt.MaxWorkers
 	if maxWorkers <= 0 {
@@ -94,7 +97,14 @@ func New(cfg *config.Config, opts ...Options) (*Agent, error) {
 
 	clientOpts := opt.ClientOpts
 	if len(clientOpts) == 0 {
-		clientOpts = []client.Options{{UserAgent: "cslite-agent/" + version}}
+		ua := strings.TrimSpace(cfg.UserAgent)
+		if ua == "" {
+			ua = client.DefaultUserAgent(version)
+		}
+		clientOpts = []client.Options{{
+			UserAgent: ua,
+			Referer:   strings.TrimSpace(cfg.Referer),
+		}}
 	}
 	c, err := client.New(cfg.Server, cfg.APIKey, clientOpts...)
 	if err != nil {
@@ -352,13 +362,21 @@ func (a *Agent) heartbeatLoop(ctx context.Context, wg *sync.WaitGroup) {
 			timer.Stop()
 			return
 		case <-timer.C:
+			a.metricsSyncMu.Lock()
+			if ctx.Err() != nil {
+				a.metricsSyncMu.Unlock()
+				return
+			}
 			threshold = heartbeatFallbackThreshold(a.getHeartbeatInterval(), a.getPollInterval())
 			lastSync := a.lastMetricsSyncNs.Load()
 			if lastSync > 0 && time.Since(time.Unix(0, lastSync)) < threshold {
+				a.metricsSyncMu.Unlock()
 				a.logger.Debug("skipping standalone heartbeat; telemetry synced via poll")
 				continue
 			}
-			if err := a.sendHeartbeat(ctx); err != nil {
+			err := a.sendHeartbeatLocked(ctx)
+			a.metricsSyncMu.Unlock()
+			if err != nil {
 				if ctx.Err() != nil {
 					return
 				}
@@ -369,6 +387,12 @@ func (a *Agent) heartbeatLoop(ctx context.Context, wg *sync.WaitGroup) {
 }
 
 func (a *Agent) sendHeartbeat(ctx context.Context) error {
+	a.metricsSyncMu.Lock()
+	defer a.metricsSyncMu.Unlock()
+	return a.sendHeartbeatLocked(ctx)
+}
+
+func (a *Agent) sendHeartbeatLocked(ctx context.Context) error {
 	agentID, deviceID := a.identity()
 	m := a.collector.Collect()
 	req := protocol.HeartbeatRequest{
@@ -472,6 +496,12 @@ func (a *Agent) pollAndDispatch(ctx context.Context, taskCh chan<- protocol.Comm
 func (a *Agent) pollWithRecovery(ctx context.Context, agentID string, limit int) ([]protocol.CommandTask, error) {
 	lastSync := a.lastMetricsSyncNs.Load()
 	includeMetrics := lastSync == 0 || time.Since(time.Unix(0, lastSync)) >= a.getHeartbeatInterval()
+	if includeMetrics {
+		a.metricsSyncMu.Lock()
+		defer a.metricsSyncMu.Unlock()
+		lastSync = a.lastMetricsSyncNs.Load()
+		includeMetrics = lastSync == 0 || time.Since(time.Unix(0, lastSync)) >= a.getHeartbeatInterval()
+	}
 
 	req := protocol.PollCommandsRequest{
 		AgentID: agentID,

@@ -1,5 +1,5 @@
 import { api } from './api';
-import { closeModal, runCleanups, state } from './state';
+import { closeModal, runCleanups, state, syncActiveTimeZone } from './state';
 
 export interface RouteContext {
   path: string;
@@ -78,9 +78,18 @@ export function startRouter(opts: {
     }
 
     opts.onBeforeRender(path);
-    opts.root.innerHTML = '<div class="ld-b"><span class="spinner"></span> Loading…</div>';
+    opts.root.innerHTML =
+      '<div class="ld-skel" aria-busy="true" aria-label="加载中"><div class="skel-bar" style="width:180px;height:24px"></div><div class="skel-grid"><div class="skel-card"></div><div class="skel-card"></div><div class="skel-card"></div><div class="skel-card"></div></div><div class="skel-card" style="height:220px"></div></div>';
 
     try {
+      if (state.user && !state.systemInfo) {
+        const sys = await api.getSystemInfo().catch(() => null);
+        if (seq !== renderSeq) return;
+        if (sys) {
+          state.systemInfo = sys;
+          syncActiveTimeZone();
+        }
+      }
       await match.handler({
         path,
         query,

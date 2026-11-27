@@ -1,5 +1,5 @@
-import type { DeviceDTO, DeviceMetrics, GroupDTO, UserDTO } from '../../shared/types';
-import { clampPercent, esc, getMemoryPercent } from './utils';
+import type { DeviceDTO, DeviceMetrics, GroupDTO, SystemInfoDTO, UserDTO } from '../../shared/types';
+import { clampPercent, esc, getMemoryPercent, isValidTimeZone, setActiveTimeZone } from './utils';
 
 export type ThemeMode = 'dark' | 'light' | 'system';
 export type ResolvedTheme = 'dark' | 'light';
@@ -30,12 +30,15 @@ export interface AppState {
   mobileMenuOpen: boolean;
   devicesCache: DeviceDTO[];
   groupsCache: GroupDTO[];
+  systemInfo: SystemInfoDTO | null;
+  timezonePref: string;
   mintedKeys: Record<string, string>;
   hostTabs: HostTab[];
 }
 
 const THEME_KEY = 'cslite_theme';
 const TABS_KEY = 'cslite_host_tabs';
+export const TIMEZONE_PREF_KEY = 'cslite_timezone';
 export const DEPLOY_KEY_STORE = 'cslite_deploy_key_v1';
 const MAX_HOST_TABS = 6;
 const MAX_TELEMETRY_POINTS = 40;
@@ -140,6 +143,13 @@ export function loadHostTabs(): HostTab[] {
   }
 }
 
+export function loadTimezonePref(): string {
+  const raw = readStorage(TIMEZONE_PREF_KEY)?.trim();
+  if (!raw || raw === 'server') return 'server';
+  if (raw === 'browser' || isValidTimeZone(raw)) return raw;
+  return 'server';
+}
+
 const initialTheme = parseThemeMode(readStorage(THEME_KEY));
 
 export const state: AppState = {
@@ -149,9 +159,34 @@ export const state: AppState = {
   mobileMenuOpen: false,
   devicesCache: [],
   groupsCache: [],
+  systemInfo: null,
+  timezonePref: loadTimezonePref(),
   mintedKeys: {},
   hostTabs: loadHostTabs(),
 };
+
+export function resolveDisplayTimeZone(): string | null {
+  const p = state.timezonePref;
+  if (p === 'browser') return null;
+  if (p === 'server') return state.systemInfo?.timezone ?? null;
+  return isValidTimeZone(p) ? p : (state.systemInfo?.timezone ?? null);
+}
+
+export function syncActiveTimeZone(): string | null {
+  const tz = resolveDisplayTimeZone();
+  setActiveTimeZone(tz);
+  return tz;
+}
+
+export function setTimezonePref(pref: string): void {
+  const clean = pref.trim();
+  const next = !clean || clean === 'server' ? 'server' : clean === 'browser' || isValidTimeZone(clean) ? clean : 'server';
+  state.timezonePref = next;
+  writeStorage(TIMEZONE_PREF_KEY, next);
+  syncActiveTimeZone();
+}
+
+syncActiveTimeZone();
 
 const hostTabListeners = new Set<() => void>();
 
@@ -348,7 +383,9 @@ export function setManagedInterval(fn: () => void, ms: number): () => void {
 // Toast Notifications (XSS-safe escaped rendering)
 // ============================================================================
 
-export function toast(message: string, kind: ToastKind = 'info'): void {
+const toastTimers = new WeakMap<HTMLElement, ReturnType<typeof setTimeout>>();
+
+export function toast(message: string, kind: ToastKind = 'info', dedupeKey?: string): void {
   if (typeof document === 'undefined') return;
   let root = document.getElementById('toast-root');
   if (!root) {
@@ -357,21 +394,33 @@ export function toast(message: string, kind: ToastKind = 'info'): void {
     root.className = 'toast-root';
     document.body.appendChild(root);
   }
-  const el = document.createElement('div');
+  const existing = dedupeKey
+    ? (Array.from(root.children).find((c) => (c as HTMLElement).dataset.toastKey === dedupeKey) as HTMLElement | undefined)
+    : undefined;
+  const el = existing ?? document.createElement('div');
   el.className = `toast toast-${kind}`;
-  el.setAttribute('role', 'status');
-  el.innerHTML = `<span class="toast-msg">${esc(message)}</span><button type="button" class="toast-close" aria-label="关闭">×</button>`;
+  if (!existing) {
+    el.setAttribute('role', 'status');
+    if (dedupeKey) el.dataset.toastKey = dedupeKey;
+    el.innerHTML = `<span class="dot toast-dot"></span><span class="toast-msg">${esc(message)}</span><button type="button" class="toast-close" aria-label="关闭">×</button>`;
+  } else {
+    const prevTimer = toastTimers.get(el);
+    if (prevTimer) clearTimeout(prevTimer);
+    const msgEl = el.querySelector('.toast-msg');
+    if (msgEl) msgEl.textContent = message;
+  }
 
-  let timer: ReturnType<typeof setTimeout> | undefined;
   const dismiss = () => {
-    if (timer) clearTimeout(timer);
+    const curTimer = toastTimers.get(el);
+    if (curTimer) clearTimeout(curTimer);
     el.classList.add('toast-leave');
     setTimeout(() => el.remove(), 160);
   };
-  (el.lastChild as HTMLElement).addEventListener('click', dismiss);
-
-  root.appendChild(el);
-  timer = setTimeout(dismiss, kind === 'err' ? 5000 : 3200);
+  if (!existing) {
+    (el.lastChild as HTMLElement).addEventListener('click', dismiss);
+    root.appendChild(el);
+  }
+  toastTimers.set(el, setTimeout(dismiss, kind === 'err' ? 5000 : 3200));
 }
 
 // ============================================================================
@@ -400,13 +449,35 @@ export function openModal(opts: ModalOptions): void {
   closeModal();
   const root = document.getElementById('modal-root');
   if (!root) return;
+  const prevFocus = typeof document !== 'undefined' ? (document.activeElement as HTMLElement | null) : null;
 
   root.innerHTML =
-    `<div class="m-bg" data-modal-backdrop><div class="m-pan ${opts.wide ? 'm-wd' : ''}" role="dialog" aria-modal="true"><div class="m-hd"><h3 class="m-ttl">${esc(opts.title)}</h3><button type="button" class="bic" data-modal-close aria-label="关闭">×</button></div><div class="m-bd">${opts.bodyHtml}</div>${opts.footerHtml ? `<div class="m-ft">${opts.footerHtml}</div>` : ''}</div></div>`;
+    `<div class="m-bg" data-modal-backdrop><div class="m-pan ${opts.wide ? 'm-wd' : ''}" role="dialog" aria-modal="true" aria-labelledby="modal-ttl" tabindex="-1"><div class="m-hd"><h3 class="m-ttl" id="modal-ttl">${esc(opts.title)}</h3><button type="button" class="bic" data-modal-close aria-label="关闭">×</button></div><div class="m-bd">${opts.bodyHtml}</div>${opts.footerHtml ? `<div class="m-ft">${opts.footerHtml}</div>` : ''}</div></div>`;
 
   const panel = root.querySelector('.m-pan') as HTMLElement;
+  const focusableSel =
+    'a[href],button:not([disabled]),input:not([type=hidden]):not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
   const onKey = (ev: KeyboardEvent) => {
-    if (ev.key === 'Escape') closeModal();
+    if (ev.isComposing || ev.keyCode === 229) return;
+    const cselPop = document.getElementById('csel-pop');
+    const cselOpen = Boolean(cselPop && !cselPop.classList.contains('hidden'));
+    if (ev.key === 'Escape' && !cselOpen) {
+      closeModal();
+      return;
+    }
+    if (ev.key === 'Tab' && !cselOpen && panel.isConnected) {
+      const items = Array.from(panel.querySelectorAll<HTMLElement>(focusableSel)).filter((el) => el.offsetParent !== null);
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (ev.shiftKey && (document.activeElement === first || !panel.contains(document.activeElement))) {
+        ev.preventDefault();
+        last.focus();
+      } else if (!ev.shiftKey && document.activeElement === last) {
+        ev.preventDefault();
+        first.focus();
+      }
+    }
   };
 
   let mountCleanup: unknown;
@@ -421,6 +492,7 @@ export function openModal(opts: ModalOptions): void {
       mountCleanup = undefined;
     }
     root.innerHTML = '';
+    if (prevFocus && prevFocus.isConnected) prevFocus.focus();
   };
   activeModalClose = cleanup;
 
@@ -433,17 +505,29 @@ export function openModal(opts: ModalOptions): void {
   if (opts.onMount && panel) {
     mountCleanup = opts.onMount(panel, closeModal);
   }
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(() => {
+      if (!panel.isConnected || panel.contains(document.activeElement)) return;
+      const firstField =
+        panel.querySelector<HTMLElement>(
+          '.m-bd input:not([type=hidden]):not([disabled]),.m-bd textarea:not([disabled])',
+        ) ??
+        panel.querySelector<HTMLElement>('button:not([data-modal-close]):not([disabled]),[data-modal-close]') ??
+        panel;
+      firstField.focus();
+    });
+  }
 }
 
 // ============================================================================
 // Clipboard Helper
 // ============================================================================
 
-export async function copyText(text: string, label = '已复制到剪贴板'): Promise<void> {
+export async function copyText(text: string, label = '已复制到剪贴板', dedupeKey?: string): Promise<void> {
   try {
     if (navigator.clipboard && window.isSecureContext) {
       await navigator.clipboard.writeText(text);
-      toast(label, 'ok');
+      toast(label, 'ok', dedupeKey);
       return;
     }
   } catch {
@@ -457,9 +541,9 @@ export async function copyText(text: string, label = '已复制到剪贴板'): P
   ta.select();
   try {
     document.execCommand('copy');
-    toast(label, 'ok');
+    toast(label, 'ok', dedupeKey);
   } catch {
-    toast('复制失败，请手动复制', 'err');
+    toast('复制失败，请手动复制', 'err', dedupeKey);
   } finally {
     ta.remove();
   }

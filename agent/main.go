@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -19,10 +20,24 @@ import (
 	"github.com/XRSec/Cslite/agent/internal/metrics"
 	"github.com/XRSec/Cslite/agent/internal/protocol"
 	"github.com/XRSec/Cslite/agent/internal/service"
+	_ "golang.org/x/crypto/x509roots/fallback"
 )
 
+//go:embed VERSION
+var embeddedVersion string
+
 // Version is injected at build time via -ldflags "-X main.Version=...".
-var Version = "v1.0.0"
+// When unset, init() populates it from agent/VERSION.
+var Version = ""
+
+func init() {
+	if strings.TrimSpace(Version) == "" {
+		Version = strings.TrimSpace(embeddedVersion)
+		if Version == "" {
+			Version = "v1.2.0"
+		}
+	}
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -112,6 +127,8 @@ func bindCommonFlags(fs *flag.FlagSet, ov *config.Overrides) {
 	fs.StringVar(&ov.APIKey, "api-key", "", "Agent API key (alias)")
 	fs.StringVar(&ov.Name, "name", "", "Device display name")
 	fs.StringVar(&ov.DeviceID, "device-id", "", "Pre-created device ID")
+	fs.StringVar(&ov.UserAgent, "user-agent", "", "Custom HTTP User-Agent header")
+	fs.StringVar(&ov.Referer, "referer", "", "Custom HTTP Referer header")
 	fs.StringVar(&ov.ConfigFile, "config", "", "Path to config file")
 	fs.IntVar(&ov.PollInterval, "poll", 0, "Command poll interval in seconds")
 	fs.IntVar(&ov.HeartbeatInterval, "heartbeat", 0, "Heartbeat interval in seconds")

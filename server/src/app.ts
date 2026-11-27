@@ -3,6 +3,7 @@ import { ErrorCode } from '../../shared/types';
 import { buildConfig, type AppConfig, type RuntimeKind } from './config';
 import type { SqlDriver } from './db/driver';
 import { ensureMigrated } from './db/migrate';
+import { constantTimeEqual } from './lib/crypto';
 import { fail, getRequestOrigin, HttpApiError, ok } from './lib/response';
 import type { AppEnv } from './middleware/auth';
 import { createAgentRoutes } from './routes/agent';
@@ -19,6 +20,8 @@ import {
   INSTALL_UNIX_SH,
   INSTALL_WINDOWS_PS1,
   OPENWRT_INIT_SH,
+  UPGRADE_UNIX_SH,
+  UPGRADE_WINDOWS_PS1,
 } from './scripts-bundle';
 import { UI_HTML } from './ui-bundle';
 
@@ -34,9 +37,19 @@ export function createApp(driver: SqlDriver, config: AppConfig): Hono<AppEnv> {
   app.use('*', async (c, next) => {
     c.set('driver', driver);
     c.set('config', config);
+    if (config.originSecret) {
+      const supplied = c.req.header(config.originSecretHeader) ?? '';
+      if (!supplied || !constantTimeEqual(supplied, config.originSecret)) {
+        return new Response(null, {
+          status: 403,
+          headers: { 'Cache-Control': 'no-store' },
+        });
+      }
+    }
     await next();
     c.header('X-Content-Type-Options', 'nosniff');
     c.header('X-Frame-Options', 'DENY');
+    c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
   });
 
   // Zero-CPU, zero-DB health check
@@ -52,6 +65,7 @@ export function createApp(driver: SqlDriver, config: AppConfig): Hono<AppEnv> {
   app.use('/api/*', async (c, next) => {
     await ensureMigrated(driver, config);
     await next();
+    c.header('Cache-Control', 'no-store');
   });
 
   app.route('/api/auth', createAuthRoutes());
@@ -66,7 +80,8 @@ export function createApp(driver: SqlDriver, config: AppConfig): Hono<AppEnv> {
     return fail(c, ErrorCode.NOT_FOUND, 'API endpoint not found', 404);
   });
 
-  const serveUi = (c: Context<AppEnv>) => c.html(UI_HTML, 200);
+  const serveUi = (c: Context<AppEnv>) =>
+    c.html(UI_HTML, 200, { 'Cache-Control': 'public, max-age=300' });
 
   app.get('/', serveUi);
   app.get('/index.html', serveUi);
@@ -74,8 +89,12 @@ export function createApp(driver: SqlDriver, config: AppConfig): Hono<AppEnv> {
   const scriptRoutes: ReadonlyArray<readonly [string, string, string, boolean]> = [
     ['/i', INSTALL_UNIX_SH, 'text/x-shellscript; charset=utf-8', true],
     ['/install.sh', INSTALL_UNIX_SH, 'text/x-shellscript; charset=utf-8', true],
+    ['/u', UPGRADE_UNIX_SH, 'text/x-shellscript; charset=utf-8', true],
+    ['/upgrade.sh', UPGRADE_UNIX_SH, 'text/x-shellscript; charset=utf-8', true],
     ['/i.ps1', INSTALL_WINDOWS_PS1, 'text/plain; charset=utf-8', true],
     ['/install.ps1', INSTALL_WINDOWS_PS1, 'text/plain; charset=utf-8', true],
+    ['/u.ps1', UPGRADE_WINDOWS_PS1, 'text/plain; charset=utf-8', true],
+    ['/upgrade.ps1', UPGRADE_WINDOWS_PS1, 'text/plain; charset=utf-8', true],
     ['/ia', INSTALL_ANDROID_SH, 'text/x-shellscript; charset=utf-8', true],
     ['/install-android.sh', INSTALL_ANDROID_SH, 'text/x-shellscript; charset=utf-8', true],
     ['/agent-lite.sh', AGENT_LITE_SH, 'text/x-shellscript; charset=utf-8', false],
@@ -108,7 +127,7 @@ export function createApp(driver: SqlDriver, config: AppConfig): Hono<AppEnv> {
     if (c.req.path.startsWith('/api/')) {
       return fail(c, ErrorCode.NOT_FOUND, 'Not found', 404);
     }
-    return c.html(UI_HTML, 200);
+    return c.html(UI_HTML, 200, { 'Cache-Control': 'public, max-age=300' });
   });
 
   return app;

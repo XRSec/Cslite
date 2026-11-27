@@ -8,6 +8,12 @@ import {
   type UpdateGroupRequest,
 } from '../../../shared/types';
 import { generateId } from '../lib/crypto';
+import {
+  buildAddDevicesToGroupStmts,
+  loadGroupDeviceIdsMap,
+  syncDevicesPrimaryGroup,
+  uniqueStrings,
+} from '../lib/device-groups';
 import { writeAuditLog } from '../lib/reconcile';
 import { fail, getClientIp, ok, readJsonBody } from '../lib/response';
 import { requireAuth, type AppEnv } from '../middleware/auth';
@@ -22,13 +28,14 @@ interface GroupRow {
   updated_at: string;
 }
 
-function toGroupDTO(row: GroupRow): GroupDTO {
+function toGroupDTO(row: GroupRow, deviceIds?: string[]): GroupDTO {
   return {
     id: row.id,
     name: row.name,
     description: row.description || '',
     created_by: Number(row.created_by),
     device_count: Number(row.device_count ?? 0),
+    device_ids: deviceIds ?? [],
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -102,11 +109,15 @@ export function createGroupRoutes(): Hono<AppEnv> {
     const params = isAdmin ? [] : [user.id];
 
     const rows = await driver.all<GroupRow>(
-      `SELECT g.id, g.name, g.description, g.created_by, g.created_at, g.updated_at, COUNT(d.id) AS device_count FROM \`groups\` g LEFT JOIN devices d ON d.group_id = g.id ${whereSql} GROUP BY g.id, g.name, g.description, g.created_by, g.created_at, g.updated_at ORDER BY g.created_at DESC`,
+      `SELECT g.id, g.name, g.description, g.created_by, g.created_at, g.updated_at, COUNT(DISTINCT dg.device_id) AS device_count FROM \`groups\` g LEFT JOIN device_groups dg ON dg.group_id = g.id ${whereSql} GROUP BY g.id, g.name, g.description, g.created_by, g.created_at, g.updated_at ORDER BY g.created_at DESC`,
       params,
     );
 
-    const groups = rows.map(toGroupDTO);
+    const groupDevMap = await loadGroupDeviceIdsMap(
+      driver,
+      rows.map((r) => r.id),
+    );
+    const groups = rows.map((row) => toGroupDTO(row, groupDevMap.get(row.id) ?? []));
     return ok(c, { total: groups.length, groups });
   });
 
@@ -160,11 +171,12 @@ export function createGroupRoutes(): Hono<AppEnv> {
     );
 
     const updated = await driver.get<GroupRow>(
-      'SELECT g.id, g.name, g.description, g.created_by, g.created_at, g.updated_at, COUNT(d.id) AS device_count FROM `groups` g LEFT JOIN devices d ON d.group_id = g.id WHERE g.id = ? GROUP BY g.id, g.name, g.description, g.created_by, g.created_at, g.updated_at',
+      'SELECT g.id, g.name, g.description, g.created_by, g.created_at, g.updated_at, COUNT(DISTINCT dg.device_id) AS device_count FROM `groups` g LEFT JOIN device_groups dg ON dg.group_id = g.id WHERE g.id = ? GROUP BY g.id, g.name, g.description, g.created_by, g.created_at, g.updated_at',
       [id],
     );
+    const groupDevMap = await loadGroupDeviceIdsMap(driver, [id]);
 
-    return ok(c, updated ? toGroupDTO(updated) : toGroupDTO(existing));
+    return ok(c, toGroupDTO(updated ?? existing, groupDevMap.get(id) ?? []));
   });
 
   router.put('/:id/devices', async (c) => {
@@ -212,10 +224,7 @@ export function createGroupRoutes(): Hono<AppEnv> {
     }
 
     const nowIso = new Date().toISOString();
-    await driver.run(
-      `UPDATE devices SET group_id = ?, updated_at = ? WHERE id IN (${placeholders})`,
-      [id, nowIso, ...deviceIds],
-    );
+    await driver.batch(buildAddDevicesToGroupStmts(driver, id, deviceIds, nowIso));
 
     return ok(c, { group_id: id, updated_count: deviceIds.length }, 'Devices added to group');
   });
@@ -266,9 +275,10 @@ export function createGroupRoutes(): Hono<AppEnv> {
 
     const nowIso = new Date().toISOString();
     const res = await driver.run(
-      `UPDATE devices SET group_id = NULL, updated_at = ? WHERE group_id = ? AND id IN (${placeholders})`,
-      [nowIso, id, ...deviceIds],
+      `DELETE FROM device_groups WHERE group_id = ? AND device_id IN (${placeholders})`,
+      [id, ...deviceIds],
     );
+    await syncDevicesPrimaryGroup(driver, deviceIds, nowIso);
 
     return ok(c, { group_id: id, removed_count: res.changes }, 'Devices removed from group');
   });
@@ -289,18 +299,30 @@ export function createGroupRoutes(): Hono<AppEnv> {
       return fail(c, ErrorCode.FORBIDDEN, 'Forbidden', 403);
     }
 
+    const dgRows = await driver.all<{ device_id: string }>(
+      'SELECT device_id FROM device_groups WHERE group_id = ?',
+      [id],
+    );
+    const legacyDevRows = await driver.all<{ id: string }>(
+      'SELECT id FROM devices WHERE group_id = ?',
+      [id],
+    );
+    const affectedIds = uniqueStrings([
+      ...dgRows.map((r) => r.device_id),
+      ...legacyDevRows.map((r) => r.id),
+    ]);
+
     const nowIso = new Date().toISOString();
     await driver.batch([
-      {
-        sql: 'UPDATE devices SET group_id = NULL, updated_at = ? WHERE group_id = ?',
-        params: [nowIso, id],
-      },
+      { sql: 'DELETE FROM device_groups WHERE group_id = ?', params: [id] },
       {
         sql: "DELETE FROM command_targets WHERE target_type = 'groups' AND target_id = ?",
         params: [id],
       },
       { sql: 'DELETE FROM `groups` WHERE id = ?', params: [id] },
     ]);
+
+    await syncDevicesPrimaryGroup(driver, affectedIds, nowIso);
 
     await writeAuditLog(driver, {
       userId: user.id,

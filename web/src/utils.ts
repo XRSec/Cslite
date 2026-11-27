@@ -109,12 +109,100 @@ export function formatElapsed(startIso?: string | null, endIso?: string | null):
   return formatDuration(diffMs / 1000);
 }
 
-/** Format an ISO-8601 date string cleanly in local time (YYYY-MM-DD HH:MM:SS). */
-export function formatDate(iso: string | null | undefined): string {
+export const TIMEZONE_PRESETS: ReadonlyArray<readonly [string, string]> = [
+  ['Asia/Shanghai', 'Asia/Shanghai (UTC+8)'],
+  ['Asia/Hong_Kong', 'Asia/Hong_Kong (UTC+8)'],
+  ['Asia/Taipei', 'Asia/Taipei (UTC+8)'],
+  ['Asia/Singapore', 'Asia/Singapore (UTC+8)'],
+  ['Asia/Tokyo', 'Asia/Tokyo (UTC+9)'],
+  ['UTC', 'UTC (UTC+0)'],
+  ['Europe/London', 'Europe/London'],
+  ['Europe/Berlin', 'Europe/Berlin'],
+  ['America/New_York', 'America/New_York'],
+  ['America/Los_Angeles', 'America/Los_Angeles'],
+];
+
+const dtfCache = new Map<string, Intl.DateTimeFormat>();
+let activeTimeZone: string | null = null;
+
+function getDtf(tz: string): Intl.DateTimeFormat | null {
+  const clean = tz.trim();
+  if (!clean) return null;
+  let fmt = dtfCache.get(clean);
+  if (fmt) return fmt;
+  try {
+    fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: clean,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23',
+    });
+    dtfCache.set(clean, fmt);
+    return fmt;
+  } catch {
+    return null;
+  }
+}
+
+/** Check whether a string is a valid IANA time zone supported by Intl. */
+export function isValidTimeZone(tz: string): boolean {
+  return typeof tz === 'string' && Boolean(getDtf(tz));
+}
+
+/** Set global display timezone for formatDate (null resets to browser local). */
+export function setActiveTimeZone(tz: string | null): void {
+  const clean = tz?.trim() || null;
+  activeTimeZone = clean && clean !== 'browser' && isValidTimeZone(clean) ? clean : null;
+}
+
+/** Get current global display timezone (null means browser local). */
+export function getActiveTimeZone(): string | null {
+  return activeTimeZone;
+}
+
+/** Return deduplicated group IDs from device.group_ids falling back to [device.group_id]. */
+export function deviceGroupIds(d: { group_id?: string | null; group_ids?: string[] }): string[] {
+  const src = d.group_ids?.length ? d.group_ids : d.group_id ? [d.group_id] : [];
+  return Array.from(new Set(src.filter(Boolean)));
+}
+
+/** Return deduplicated primary + reported interface IPs for a device. */
+export function deviceIps(d: {
+  ip_address?: string;
+  metrics?: { ip_addresses?: string[] } | null;
+}): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const push = (ip?: string) => {
+    const clean = ip?.trim();
+    if (clean && !seen.has(clean)) {
+      seen.add(clean);
+      out.push(clean);
+    }
+  };
+  push(d.ip_address);
+  for (const ip of d.metrics?.ip_addresses ?? []) push(ip);
+  return out;
+}
+
+/** Format an ISO-8601 date string cleanly (YYYY-MM-DD HH:MM:SS) in explicit/active timezone or local time. */
+export function formatDate(iso: string | null | undefined, timeZone?: string | null): string {
   if (!iso) return '--';
   const ms = Date.parse(iso);
   if (Number.isNaN(ms)) return '--';
   const d = new Date(ms);
+  const tz = timeZone !== undefined ? timeZone : activeTimeZone;
+  const fmt = tz && tz !== 'browser' ? getDtf(tz) : null;
+  if (fmt) {
+    const parts: Record<string, string> = {};
+    for (const p of fmt.formatToParts(d)) parts[p.type] = p.value;
+    const hr = parts.hour === '24' ? '00' : parts.hour;
+    return `${parts.year}-${parts.month}-${parts.day} ${hr}:${parts.minute}:${parts.second}`;
+  }
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }

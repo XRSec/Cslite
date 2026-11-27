@@ -1,3 +1,5 @@
+import { isValidTimeZone } from './timezone';
+
 export class CronValidationError extends Error {
   constructor(message: string) {
     super(message);
@@ -190,59 +192,188 @@ function dayMatches(schedule: CronSchedule, dom: number, dow: number): boolean {
   return schedule.daysOfMonth.has(dom) || schedule.daysOfWeek.has(dow);
 }
 
+const WEEKDAY_MAP: Record<string, number> = {
+  Sun: 0,
+  Mon: 1,
+  Tue: 2,
+  Wed: 3,
+  Thu: 4,
+  Fri: 5,
+  Sat: 6,
+};
+
+const zonedFormatterCache = new Map<string, Intl.DateTimeFormat>();
+
+function getZonedFormatter(timeZone: string): Intl.DateTimeFormat {
+  let fmt = zonedFormatterCache.get(timeZone);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      weekday: 'short',
+      hourCycle: 'h23',
+    });
+    zonedFormatterCache.set(timeZone, fmt);
+  }
+  return fmt;
+}
+
+interface ZonedParts {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  dow: number;
+}
+
+function getZonedParts(fmt: Intl.DateTimeFormat, epochMs: number): ZonedParts {
+  const parts = fmt.formatToParts(new Date(epochMs));
+  let year = 0;
+  let month = 1;
+  let day = 1;
+  let hour = 0;
+  let minute = 0;
+  let dow = 0;
+
+  for (const part of parts) {
+    switch (part.type) {
+      case 'year':
+        year = Number.parseInt(part.value, 10);
+        break;
+      case 'month':
+        month = Number.parseInt(part.value, 10);
+        break;
+      case 'day':
+        day = Number.parseInt(part.value, 10);
+        break;
+      case 'hour': {
+        const parsedHour = Number.parseInt(part.value, 10);
+        hour = parsedHour === 24 ? 0 : parsedHour;
+        break;
+      }
+      case 'minute':
+        minute = Number.parseInt(part.value, 10);
+        break;
+      case 'weekday':
+        dow = WEEKDAY_MAP[part.value] ?? 0;
+        break;
+    }
+  }
+
+  return { year, month, day, hour, minute, dow };
+}
+
 /**
- * Computes the next UTC ISO-8601 execution timestamp strictly after `afterDate`.
+ * Computes the next UTC ISO-8601 execution timestamp strictly after `afterDate`
+ * evaluated in `timeZone` (defaults to UTC).
  */
 export function nextCronAfter(
   scheduleOrExpr: CronSchedule | string,
   afterDate: Date = new Date(),
+  timeZone = 'UTC',
 ): string {
   const schedule =
     typeof scheduleOrExpr === 'string' ? parseCron(scheduleOrExpr) : scheduleOrExpr;
 
-  const cursor = new Date(
-    Date.UTC(
-      afterDate.getUTCFullYear(),
-      afterDate.getUTCMonth(),
-      afterDate.getUTCDate(),
-      afterDate.getUTCHours(),
-      afterDate.getUTCMinutes() + 1,
-      0,
-      0,
-    ),
-  );
+  const trimmedTz = typeof timeZone === 'string' ? timeZone.trim() : '';
+  if (!trimmedTz || trimmedTz === 'UTC' || !isValidTimeZone(trimmedTz)) {
+    const cursor = new Date(
+      Date.UTC(
+        afterDate.getUTCFullYear(),
+        afterDate.getUTCMonth(),
+        afterDate.getUTCDate(),
+        afterDate.getUTCHours(),
+        afterDate.getUTCMinutes() + 1,
+        0,
+        0,
+      ),
+    );
 
-  const maxYear = afterDate.getUTCFullYear() + 8;
+    const maxYear = afterDate.getUTCFullYear() + 8;
 
-  while (cursor.getUTCFullYear() <= maxYear) {
-    const month = cursor.getUTCMonth() + 1;
-    if (!schedule.months.has(month)) {
-      cursor.setUTCMonth(cursor.getUTCMonth() + 1, 1);
-      cursor.setUTCHours(0, 0, 0, 0);
+    while (cursor.getUTCFullYear() <= maxYear) {
+      const month = cursor.getUTCMonth() + 1;
+      if (!schedule.months.has(month)) {
+        cursor.setUTCMonth(cursor.getUTCMonth() + 1, 1);
+        cursor.setUTCHours(0, 0, 0, 0);
+        continue;
+      }
+
+      const dom = cursor.getUTCDate();
+      const dow = cursor.getUTCDay();
+      if (!dayMatches(schedule, dom, dow)) {
+        cursor.setUTCDate(dom + 1);
+        cursor.setUTCHours(0, 0, 0, 0);
+        continue;
+      }
+
+      const hour = cursor.getUTCHours();
+      if (!schedule.hours.has(hour)) {
+        cursor.setUTCHours(hour + 1, 0, 0, 0);
+        continue;
+      }
+
+      const minute = cursor.getUTCMinutes();
+      if (!schedule.minutes.has(minute)) {
+        cursor.setUTCMinutes(minute + 1, 0, 0);
+        continue;
+      }
+
+      return cursor.toISOString();
+    }
+
+    throw new CronValidationError(`No upcoming run found within 8 years for "${schedule.raw}"`);
+  }
+
+  const fmt = getZonedFormatter(trimmedTz);
+  let cursorMs = Math.floor(afterDate.getTime() / 60_000) * 60_000 + 60_000;
+  const startParts = getZonedParts(fmt, cursorMs);
+  const maxYear = startParts.year + 8;
+
+  while (true) {
+    const parts = getZonedParts(fmt, cursorMs);
+    if (parts.year > maxYear) {
+      break;
+    }
+
+    if (!schedule.months.has(parts.month)) {
+      if (parts.day < 26) {
+        cursorMs += (26 - parts.day) * 1440 * 60_000;
+      } else {
+        const dayStepMins =
+          parts.hour < 22
+            ? (22 - parts.hour) * 60 + (60 - parts.minute)
+            : Math.max(1, 60 - parts.minute);
+        cursorMs += dayStepMins * 60_000;
+      }
       continue;
     }
 
-    const dom = cursor.getUTCDate();
-    const dow = cursor.getUTCDay();
-    if (!dayMatches(schedule, dom, dow)) {
-      cursor.setUTCDate(dom + 1);
-      cursor.setUTCHours(0, 0, 0, 0);
+    if (!dayMatches(schedule, parts.day, parts.dow)) {
+      const dayStepMins =
+        parts.hour < 22
+          ? (22 - parts.hour) * 60 + (60 - parts.minute)
+          : Math.max(1, 60 - parts.minute);
+      cursorMs += dayStepMins * 60_000;
       continue;
     }
 
-    const hour = cursor.getUTCHours();
-    if (!schedule.hours.has(hour)) {
-      cursor.setUTCHours(hour + 1, 0, 0, 0);
+    if (!schedule.hours.has(parts.hour)) {
+      cursorMs += Math.max(1, 60 - parts.minute) * 60_000;
       continue;
     }
 
-    const minute = cursor.getUTCMinutes();
-    if (!schedule.minutes.has(minute)) {
-      cursor.setUTCMinutes(minute + 1, 0, 0);
+    if (!schedule.minutes.has(parts.minute)) {
+      cursorMs += 60_000;
       continue;
     }
 
-    return cursor.toISOString();
+    return new Date(cursorMs).toISOString();
   }
 
   throw new CronValidationError(`No upcoming run found within 8 years for "${schedule.raw}"`);

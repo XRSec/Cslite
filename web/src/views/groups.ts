@@ -1,11 +1,12 @@
 import type { DeviceDTO, GroupDTO } from '../../../shared/types';
 import { api, ApiError } from '../api';
 import { platformBadge, statusBadge } from '../components/badges';
-import { btn, confirmModal, fieldHtml, formModal, on, onAll, pageHeadHtml, targetItemHtml, val } from '../components/ui';
+import { btn, confirmModal, fieldHtml, formModal, hCard, hEmp, hInp, hLnk, hMut, hRb, hRow, on, onAll, pageHeadHtml, targetItemHtml, val } from '../components/ui';
 import { icons } from '../icons';
 import type { RouteContext } from '../router';
 import { openModal, state, toast } from '../state';
-import { esc, formatDate } from '../utils';
+import { deviceGroupIds, esc, formatDate } from '../utils';
+import { groupToneClass } from './devices';
 
 export async function renderGroups(ctx: RouteContext): Promise<void> {
   let groups: GroupDTO[] = [];
@@ -27,19 +28,31 @@ export async function renderGroups(ctx: RouteContext): Promise<void> {
 
   const memberIdsOf = (g: GroupDTO): Set<string> => {
     const ids = new Set<string>(g.device_ids ?? []);
-    for (const d of devices) if (d.group_id === g.id) ids.add(d.id);
+    for (const d of devices) if (deviceGroupIds(d).includes(g.id)) ids.add(d.id);
     return ids;
   };
 
   const paint = () => {
     const cardsHtml = !groups.length
-      ? '<div class="card emp-i mut">暂无主机分组，点击右上角“新建分组”开始整理设备。</div>'
+      ? hCard(hEmp('暂无主机分组，点击右上角“新建分组”开始整理设备。'))
       : `<div class="cards-grid">${groups
           .map((g) => {
             const members = devices.filter((d) => memberIdsOf(g).has(d.id));
             const onlineCount = members.filter((d) => d.status === 'online').length;
             const count = Math.max(g.device_count ?? 0, members.length);
-            return `<div class="card ssm"><div class="rb"><div><h3 class="card-title">${esc(g.name)}</h3><div class="mut txs">${esc(g.description || '暂无描述')}</div></div><span class="grp-pill num">${esc(count)} 台</span></div><div class="mut txs num">${members.length ? `<span class="tok">${onlineCount} 在线</span> · ` : ''}创建于 ${esc(formatDate(g.created_at).slice(0, 10))}</div><div class="rb wrap gxs pt-1"><div class="row gxs">${btn(`${icons.devices()} 分配主机`, `data-members="${esc(g.id)}"`, 'bxs ba')}<a class="btn bxs bg" href="#/console?group=${encodeURIComponent(g.id)}">${icons.console()} 批量执行</a></div><div class="row gxs">${btn(icons.edit(), `data-edit-grp="${esc(g.id)}" title="编辑"`, 'bxs bg')}${btn(icons.trash(), `data-del-grp="${esc(g.id)}" title="删除"`, 'bxs bg ter')}</div></div></div>`;
+            const memberChips = members.length
+              ? `<div class="grp-members">${members
+                  .slice(0, 4)
+                  .map((d) => {
+                    const dot = d.status === 'online' ? 'dot-ok' : d.status === 'busy' ? 'dot-warn' : 'dot-err';
+                    return `<a class="tag node-link" href="#/devices/${encodeURIComponent(d.id)}"><span class="dot ${dot}"></span><span class="truncate max-w-160">${esc(d.name)}</span></a>`;
+                  })
+                  .join('')}${members.length > 4 ? `<span class="tag num">+${members.length - 4}</span>` : ''}</div>`
+              : '';
+            return hCard(
+              `<div class="rb"><div><h3 class="card-title">${esc(g.name)}</h3>${hMut(esc(g.description || '暂无描述'))}</div><span class="grp-pill ${groupToneClass(g.id)} num">${esc(count)} 台</span></div><div class="mut txs num">${members.length ? `<span class="tok">${onlineCount} 在线</span> · ` : ''}创建于 ${esc(formatDate(g.created_at).slice(0, 10))}</div>${memberChips}${hRb(`${hRow(`${btn(`${icons.devices()} 分配主机`, `data-members="${esc(g.id)}"`, 'bxs ba')}${hLnk(`#/console?group=${encodeURIComponent(g.id)}`, `${icons.console()} 批量执行`, 'bxs bg')}`)}${hRow(`${btn(icons.edit(), `data-edit-grp="${esc(g.id)}" title="编辑"`, 'bxs bg')}${btn(icons.trash(), `data-del-grp="${esc(g.id)}" title="删除"`, 'bxs bg ter')}`)}`, 'wrap gxs pt-1')}`,
+              'ssm',
+            );
           })
           .join('')}</div>`;
 
@@ -83,7 +96,7 @@ export async function renderGroups(ctx: RouteContext): Promise<void> {
       formId: 'grp-form',
       submitLabel: existing ? '保存修改' : '立即创建',
       fieldsHtml:
-        fieldHtml('gf-name', '分组名称', `<input id="gf-name" class="input" type="text" required maxlength="80" value="${esc(existing?.name ?? '')}" placeholder="例如 edge-routers">`) +
+        fieldHtml('gf-name', '分组名称', hInp('gf-name', 'text', `required maxlength="80" value="${esc(existing?.name ?? '')}" placeholder="例如 edge-routers"`)) +
         fieldHtml('gf-desc', '分组描述', `<textarea id="gf-desc" class="input" rows="3" placeholder="OpenWrt 边缘网关集群">${esc(existing?.description ?? '')}</textarea>`),
       async onSubmit(panel, close) {
         const name = val(panel, '#gf-name');
@@ -101,6 +114,7 @@ export async function renderGroups(ctx: RouteContext): Promise<void> {
   const openMembersModal = (g: GroupDTO) => {
     const initial = memberIdsOf(g);
     const chosen = new Set<string>(initial);
+    const grpMap = new Map(groups.map((x) => [x.id, x.name]));
 
     openModal({
       title: `分配成员主机 — ${g.name}`,
@@ -117,14 +131,17 @@ export async function renderGroups(ctx: RouteContext): Promise<void> {
           listEl.innerHTML = !filtered.length
             ? '<div class="mut txs p-2">无匹配主机</div>'
             : filtered
-                .map((d) =>
-                  targetItemHtml(
+                .map((d) => {
+                  const boundTags = deviceGroupIds(d)
+                    .map((gid) => `<span class="grp-pill ${groupToneClass(gid)}">${esc(grpMap.get(gid) ?? gid)}</span>`)
+                    .join('');
+                  return targetItemHtml(
                     d.id,
                     'gm-chk',
                     chosen.has(d.id),
-                    `<div class="rb flex-1 gsm wrap"><div><strong>${esc(d.name)}</strong> <span class="mut txs mono">${esc(d.ip_address || d.hostname || '')}</span></div><div class="row gxs">${platformBadge(d.platform)} ${statusBadge(d.status)}</div></div>`,
-                  ),
-                )
+                    `<div class="rb flex-1 gsm wrap"><div><strong>${esc(d.name)}</strong> <span class="mut txs mono">${esc(d.ip_address || d.hostname || '')}</span>${boundTags ? `<div class="grp-members mt-1">${boundTags}</div>` : ''}</div><div class="row gxs">${platformBadge(d.platform)} ${statusBadge(d.status)}</div></div>`,
+                  );
+                })
                 .join('');
 
           onAll(listEl, '.gm-chk', (el) => {

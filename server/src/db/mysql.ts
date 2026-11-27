@@ -86,7 +86,7 @@ export function normalizeMysqlDsn(rawDsn: string): string {
 }
 
 /**
- * Builds a MySQL URI from MDM-style environment variables when `MYSQL_HOST` and `MYSQL_DATABASE` are set.
+ * Builds a MySQL URI from standard MYSQL_* environment variables when `MYSQL_HOST` and `MYSQL_DATABASE` are set.
  */
 export function buildMysqlDsnFromEnv(env: Record<string, string | undefined>): string | null {
   const host = (env.MYSQL_HOST || '').trim();

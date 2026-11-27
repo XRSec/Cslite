@@ -11,14 +11,14 @@ function fmtSlotTime(ts: number, seeded?: boolean): string {
 }
 
 function chartShell(label: string, bars: string): string {
-  return `<div class="chart-wrap"><svg class="collie-chart" viewBox="0 0 400 96" preserveAspectRatio="none" role="img" aria-label="${esc(label)}"><line x1="0" y1="50" x2="400" y2="50" stroke="var(--border)" stroke-dasharray="3 3" stroke-width=".8" opacity=".5"/>${bars}</svg><div class="chart-tip hidden"></div></div>`;
+  return `<div class="chart-wrap"><svg class="collie-chart" viewBox="0 0 400 96" preserveAspectRatio="none" role="img" aria-label="${esc(label)}"><line x1="0" y1="50" x2="400" y2="50" stroke="var(--cds-border)" stroke-dasharray="3 3" stroke-width=".8" opacity=".7"/>${bars}</svg><div class="chart-tip hidden"></div></div>`;
 }
 
 function barRect(x: number, valRatio: number, width: number, rx: number, fill: string, op: string, bg = true): string {
   const usable = 84;
   const h = valRatio > 0 ? Math.max(3, Math.min(1, valRatio) * usable) : 2;
   const y = (92 - h).toFixed(1);
-  return `${bg ? `<rect x="${x}" y="8" width="${width}" height="${usable}" rx="${rx}" fill="var(--bg-circle)" opacity=".2"/>` : ''}<rect x="${x}" y="${y}" width="${width}" height="${h.toFixed(1)}" rx="${rx}" fill="${fill}" opacity="${op}"/>`;
+  return `${bg ? `<rect x="${x}" y="8" width="${width}" height="${usable}" rx="${rx}" fill="var(--bg-circle)" opacity=".45"/>` : ''}<rect x="${x}" y="${y}" width="${width}" height="${h.toFixed(1)}" rx="${rx}" fill="${fill}" opacity="${op}"/>`;
 }
 
 export function singleBarChartHtml(opts: {
@@ -30,7 +30,7 @@ export function singleBarChartHtml(opts: {
   const bars = opts.samples
     .map((s, i) => {
       const v = Math.max(0, Math.min(100, opts.pick(s)));
-      const fill = v >= 90 ? 'var(--err)' : v >= 75 ? 'var(--warn)' : opts.tone === 'mint' ? 'var(--ok)' : 'var(--accent)';
+      const fill = v >= 90 ? 'var(--err)' : v >= 75 ? 'var(--warn)' : opts.tone === 'mint' ? 'var(--ok)' : 'var(--cds-fill-accent)';
       const tip = `${fmtSlotTime(s.ts, s.seeded)} · ${opts.label} ${v.toFixed(1)}%`;
       return `<g class="cbar-slot" data-tip="${esc(tip)}">${barRect(i * 10 + 1.5, v / 100, 7, 2.5, fill, s.seeded ? '.32' : '.95')}</g>`;
     })
@@ -51,10 +51,10 @@ export function networkBarChartHtml(samples: TelemetrySample[], mode: NetChartMo
       const tip = `${fmtSlotTime(s.ts, s.seeded)} · ↑ ${formatRate(s.netOut)} / ↓ ${formatRate(s.netIn)}`;
       const body =
         mode === 'tx'
-          ? barRect(x + 0.5, s.netOut / maxRate, 7, 2.5, 'var(--accent)', op)
+          ? barRect(x + 0.5, s.netOut / maxRate, 7, 2.5, 'var(--cds-fill-accent)', op)
           : mode === 'rx'
             ? barRect(x + 0.5, s.netIn / maxRate, 7, 2.5, 'var(--ok)', op)
-            : `${barRect(x, s.netOut / maxRate, 3.5, 1.5, 'var(--accent)', op, false)}${barRect(x + 4.5, s.netIn / maxRate, 3.5, 1.5, 'var(--ok)', op, false)}`;
+            : `${barRect(x, s.netOut / maxRate, 3.5, 1.5, 'var(--cds-fill-accent)', op, false)}${barRect(x + 4.5, s.netIn / maxRate, 3.5, 1.5, 'var(--ok)', op, false)}`;
       return `<g class="cbar-slot" data-tip="${esc(tip)}">${body}</g>`;
     })
     .join('');

@@ -336,8 +336,8 @@ func TestAgentTwoTierPollWithTelemetryAndSuppressesHeartbeat(t *testing.T) {
 		t.Fatalf("New() failed: %v", err)
 	}
 	ag.intervalMu.Lock()
-	ag.pollInterval = 25 * time.Millisecond
-	ag.heartbeatInterval = 80 * time.Millisecond
+	ag.pollInterval = 40 * time.Millisecond
+	ag.heartbeatInterval = 140 * time.Millisecond
 	ag.intervalMu.Unlock()
 
 	ctx, cancel := context.WithCancel(context.Background())

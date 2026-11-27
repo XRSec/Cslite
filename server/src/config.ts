@@ -1,3 +1,5 @@
+import { normalizeTimeZone } from './lib/timezone';
+
 export type RuntimeKind = 'node' | 'cloudflare-worker' | 'scf';
 
 export interface AppConfig {
@@ -11,6 +13,12 @@ export interface AppConfig {
   sessionTtlSeconds: number;
   cookieSecure?: boolean;
   publicBaseUrl?: string;
+  encryptionKey?: string;
+  originSecret?: string;
+  originSecretHeader: string;
+  timezone?: string;
+  envLogRetentionDays?: number;
+  logRetentionDays: number;
   defaultTimeoutSeconds: number;
   maxPayloadBytes: number;
   maxOutputBytes: number;
@@ -41,6 +49,18 @@ export function buildConfig(
   const publicBaseUrl =
     (env.PUBLIC_BASE_URL?.trim() || env.CSLITE_PUBLIC_BASE_URL?.trim() || '').replace(/\/+$/, '') ||
     undefined;
+  const encryptionKey =
+    env.CSLITE_ENCRYPTION_KEY?.trim() || env.CSLITE_SECRET?.trim() || undefined;
+  const originSecret = env.CSLITE_ORIGIN_SECRET?.trim() || undefined;
+  const originSecretHeader =
+    env.CSLITE_ORIGIN_SECRET_HEADER?.trim().toLowerCase() || 'x-cslite-origin-secret';
+  const timezone =
+    normalizeTimeZone(env.CSLITE_TIMEZONE) ?? normalizeTimeZone(env.TZ) ?? undefined;
+  const rawRetention = env.CSLITE_LOG_RETENTION_DAYS?.trim();
+  const envLogRetentionDays =
+    rawRetention !== undefined && /^\d+$/.test(rawRetention)
+      ? Math.min(3650, Number.parseInt(rawRetention, 10))
+      : undefined;
   return {
     runtime,
     version: env.CSLITE_VERSION || '4.0.0',
@@ -52,6 +72,12 @@ export function buildConfig(
     sessionTtlSeconds: parsePositiveInt(env.CSLITE_SESSION_TTL, 7 * 24 * 3600),
     cookieSecure: parseOptionalBool(env.CSLITE_COOKIE_SECURE),
     publicBaseUrl,
+    encryptionKey,
+    originSecret,
+    originSecretHeader,
+    timezone,
+    envLogRetentionDays,
+    logRetentionDays: envLogRetentionDays ?? 30,
     defaultTimeoutSeconds: parsePositiveInt(env.CSLITE_DEFAULT_TIMEOUT, 1800),
     maxPayloadBytes: 1024 * 1024,
     maxOutputBytes: 256 * 1024,

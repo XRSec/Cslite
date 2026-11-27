@@ -15,14 +15,35 @@ import (
 )
 
 const openWrtInitPath = "/etc/init.d/" + ServiceName
+const openRCInitPath = "/etc/init.d/" + ServiceName
 
-// DetectInitSystem returns "procd" on OpenWrt, "systemd" when systemd is active, or "unknown".
+func isOpenRC() bool {
+	if config.IsOpenWrt() {
+		return false
+	}
+	if _, err := os.Stat("/run/systemd/system"); err == nil {
+		return false
+	}
+	if _, err := osexec.LookPath("rc-service"); err != nil {
+		return false
+	}
+	if _, err := osexec.LookPath("openrc-run"); err == nil {
+		return true
+	}
+	_, err := os.Stat("/sbin/openrc-run")
+	return err == nil
+}
+
+// DetectInitSystem returns "procd" on OpenWrt, "systemd", "openrc", or "unknown".
 func DetectInitSystem() string {
 	if config.IsOpenWrt() {
 		return "procd"
 	}
 	if _, err := os.Stat("/run/systemd/system"); err == nil {
 		return "systemd"
+	}
+	if isOpenRC() {
+		return "openrc"
 	}
 	if _, err := osexec.LookPath("systemctl"); err == nil {
 		return "systemd"
@@ -40,10 +61,13 @@ func RunWindowsService(_ string, _ func(ctx context.Context) error) error {
 	return errors.New("windows service mode is only supported on windows")
 }
 
-// Install installs, enables, and starts the agent service using procd or systemd.
+// Install installs, enables, and starts the agent service using procd, openrc, or systemd.
 func Install(opts Options) error {
 	if config.IsOpenWrt() {
 		return installOpenWrt(opts)
+	}
+	if !opts.UserMode && os.Geteuid() == 0 && isOpenRC() {
+		return installOpenRC(opts)
 	}
 	return installSystemd(opts)
 }
@@ -53,6 +77,9 @@ func Uninstall(opts Options) error {
 	if config.IsOpenWrt() {
 		return uninstallOpenWrt()
 	}
+	if !opts.UserMode && os.Geteuid() == 0 && isOpenRC() {
+		return uninstallOpenRC()
+	}
 	return uninstallSystemd(opts)
 }
 
@@ -60,6 +87,9 @@ func Uninstall(opts Options) error {
 func Start(opts Options) error {
 	if config.IsOpenWrt() {
 		return runCmd(openWrtInitPath, "start")
+	}
+	if !opts.UserMode && isOpenRC() {
+		return runCmd("rc-service", ServiceName, "start")
 	}
 	return systemctl(opts.UserMode, "start", ServiceName)
 }
@@ -69,6 +99,9 @@ func Stop(opts Options) error {
 	if config.IsOpenWrt() {
 		return runCmd(openWrtInitPath, "stop")
 	}
+	if !opts.UserMode && isOpenRC() {
+		return runCmd("rc-service", ServiceName, "stop")
+	}
 	return systemctl(opts.UserMode, "stop", ServiceName)
 }
 
@@ -76,6 +109,9 @@ func Stop(opts Options) error {
 func Restart(opts Options) error {
 	if config.IsOpenWrt() {
 		return runCmd(openWrtInitPath, "restart")
+	}
+	if !opts.UserMode && isOpenRC() {
+		return runCmd("rc-service", ServiceName, "restart")
 	}
 	return systemctl(opts.UserMode, "restart", ServiceName)
 }
@@ -90,6 +126,15 @@ func Status(opts Options) (string, error) {
 			return "running (procd)", nil
 		}
 		return "stopped (procd)", nil
+	}
+	if !opts.UserMode && isOpenRC() {
+		if _, err := os.Stat(openRCInitPath); errors.Is(err, os.ErrNotExist) {
+			return "not installed", nil
+		}
+		if err := osexec.Command("rc-service", ServiceName, "status").Run(); err == nil {
+			return "running (openrc)", nil
+		}
+		return "stopped (openrc)", nil
 	}
 
 	args := []string{"is-active", ServiceName}
@@ -128,6 +173,33 @@ func uninstallOpenWrt() error {
 	return os.Remove(openWrtInitPath)
 }
 
+func installOpenRC(opts Options) error {
+	if opts.LogPath != "" {
+		_ = os.MkdirAll(filepath.Dir(opts.LogPath), 0755)
+	}
+	script := RenderOpenRCInit(opts.BinaryPath, opts.ConfigPath, opts.LogPath)
+	if err := os.MkdirAll(filepath.Dir(openRCInitPath), 0755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(openRCInitPath, []byte(script), 0755); err != nil {
+		return err
+	}
+	_ = runCmd("rc-update", "add", ServiceName, "default")
+	if err := runCmd("rc-service", ServiceName, "restart"); err == nil {
+		return nil
+	}
+	return runCmd("rc-service", ServiceName, "start")
+}
+
+func uninstallOpenRC() error {
+	if _, err := os.Stat(openRCInitPath); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	_ = runCmd("rc-service", ServiceName, "stop")
+	_ = runCmd("rc-update", "del", ServiceName, "default")
+	return os.Remove(openRCInitPath)
+}
+
 func systemdUnitPath(userMode bool) (string, error) {
 	if !userMode && os.Geteuid() == 0 {
 		return "/etc/systemd/system/" + ServiceName + ".service", nil
@@ -159,7 +231,10 @@ func installSystemd(opts Options) error {
 	if err := systemctl(userMode, "daemon-reload"); err != nil {
 		return err
 	}
-	return systemctl(userMode, "enable", "--now", ServiceName)
+	if err := systemctl(userMode, "enable", ServiceName); err != nil {
+		return err
+	}
+	return systemctl(userMode, "restart", ServiceName)
 }
 
 func uninstallSystemd(opts Options) error {

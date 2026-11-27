@@ -1,7 +1,7 @@
 import { UserRole } from '../../shared/types';
 import { api, setUnauthorizedHandler } from './api';
 import { osBadge } from './components/badges';
-import { on } from './components/ui';
+import { initCustomSelects, initIpCopyHandler, on } from './components/ui';
 import { icons } from './icons';
 import { navigate, parseHash, startRouter, type RouteMatch } from './router';
 import {
@@ -64,17 +64,19 @@ const navLinksHtml = (list: Array<[string, string, () => string]>) =>
 
 function bootstrap(): void {
   applyTheme(state.theme);
+  initCustomSelects();
+  initIpCopyHandler();
   const appRoot = document.getElementById('app');
   if (!appRoot) return;
 
   appRoot.innerHTML =
     `<div id="shell" class="shell">` +
     `<header id="topbar" class="topbar" aria-label="顶部导航">` +
-    `<div class="tb-left"><button type="button" class="bic tb-mob-btn" id="btn-mobile-menu" aria-label="菜单">${icons.menu()}</button><a href="#/" class="brand-pill" id="nav-home">${icons.brand()}<span>Cslite · 主机管理</span></a><div class="host-tabs" id="top-host-tabs" role="tablist"></div></div>` +
+    `<div class="tb-left"><button type="button" class="bic tb-mob-btn" id="btn-mobile-menu" aria-label="菜单">${icons.menu()}</button><a href="#/" class="brand-pill" id="nav-home">${icons.brand()}<span>CSLite · 主机管理</span></a><div class="host-tabs" id="top-host-tabs" role="tablist"></div></div>` +
     `<div class="tb-right"><nav class="top-nav" id="top-nav">${navLinksHtml(NAV_ITEMS)}</nav><button type="button" class="theme-pill" id="btn-theme" title="切换主题"></button><div class="user-pill" id="top-user"></div><button type="button" class="bic ter" id="btn-logout" title="退出">${icons.logout()}</button></div>` +
     `</header>` +
     `<div id="drawer-backdrop" class="d-bg"></div>` +
-    `<aside id="mobile-drawer" class="mob-drawer"><div class="mob-hd"><div class="row gxs">${icons.brand()}<strong>Cslite</strong></div><button type="button" class="bic" id="btn-drawer-close">×</button></div><div class="mob-user" id="mob-user"></div><nav class="mob-nav">${navLinksHtml([['/', '主机管理', icons.devices], ...NAV_ITEMS])}</nav><div class="mob-tabs-wrap"><div class="mut t2xs mb-1">已打开主机</div><div class="mob-host-tabs" id="mob-host-tabs"></div></div><div class="mob-foot"><button type="button" class="btn bsm bg flex-1" id="btn-theme-mob"></button><button type="button" class="btn bsm be" id="btn-logout-mob">${icons.logout()} 退出</button></div></aside>` +
+    `<aside id="mobile-drawer" class="mob-drawer"><div class="mob-hd"><div class="row gxs">${icons.brand()}<strong>CSLite</strong></div><button type="button" class="bic" id="btn-drawer-close">×</button></div><div class="mob-user" id="mob-user"></div><nav class="mob-nav">${navLinksHtml([['/', '主机管理', icons.devices], ...NAV_ITEMS])}</nav><div class="mob-tabs-wrap"><div class="mut t2xs mb-1">已打开主机</div><div class="mob-host-tabs" id="mob-host-tabs"></div></div><div class="mob-foot"><button type="button" class="btn bsm bg flex-1" id="btn-theme-mob"></button><button type="button" class="btn bsm be" id="btn-logout-mob">${icons.logout()} 退出</button></div></aside>` +
     `<main id="view-root" class="view-root"></main>` +
     `</div><div id="modal-root"></div><div id="toast-root" class="toast-root"></div>`;
 
@@ -146,6 +148,9 @@ function bootstrap(): void {
   on(appRoot, '#btn-mobile-menu', () => toggleDrawer(!state.mobileMenuOpen));
   on(appRoot, '#btn-drawer-close', () => toggleDrawer(false));
   on(appRoot, '#drawer-backdrop', () => toggleDrawer(false));
+  document.addEventListener('keydown', (ev) => {
+    if (state.mobileMenuOpen && ev.key === 'Escape' && !ev.isComposing && ev.keyCode !== 229) toggleDrawer(false);
+  });
 
   const handleTheme = () => {
     toggleTheme();

@@ -1,3 +1,8 @@
+# Reference Serverless Framework template for initial SCF setup.
+# Note: To avoid unexpected CLS billing or overwriting Console env/URL settings,
+# disable CLS log delivery and prefer Console zip upload or `tccli scf UpdateFunctionCode`
+# for routine updates (see docs/deploy.md#3-腾讯云-scf--腾讯云-cdn-部署).
+
 app: cslite
 component: scf
 name: ap-nanjing_default_cslite
@@ -32,6 +37,7 @@ inputs:
   environment:
     variables:
       TZ: Asia/Shanghai
+      CSLITE_TIMEZONE: ${env:CSLITE_TIMEZONE}
       CSLITE_DB_DRIVER: ${env:CSLITE_DB_DRIVER}
       MYSQL_HOST: ${env:MYSQL_HOST}
       MYSQL_PORT: ${env:MYSQL_PORT}
@@ -41,7 +47,11 @@ inputs:
       MYSQL_SSL: ${env:MYSQL_SSL}
       PUBLIC_BASE_URL: ${env:PUBLIC_BASE_URL}
       CSLITE_COOKIE_SECURE: ${env:CSLITE_COOKIE_SECURE}
+      CSLITE_ORIGIN_SECRET: ${env:CSLITE_ORIGIN_SECRET}
+      CSLITE_ENCRYPTION_KEY: ${env:CSLITE_ENCRYPTION_KEY}
       CSLITE_ADMIN_USERNAME: ${env:CSLITE_ADMIN_USERNAME}
       CSLITE_ADMIN_PASSWORD: ${env:CSLITE_ADMIN_PASSWORD}
+      CSLITE_ALLOW_REGISTRATION: ${env:CSLITE_ALLOW_REGISTRATION}
+      CSLITE_LOG_RETENTION_DAYS: ${env:CSLITE_LOG_RETENTION_DAYS}
       CSLITE_HEARTBEAT_INTERVAL: ${env:CSLITE_HEARTBEAT_INTERVAL}
       CSLITE_POLL_INTERVAL: ${env:CSLITE_POLL_INTERVAL}

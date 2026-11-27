@@ -11,9 +11,12 @@ import (
 	osexec "os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/XRSec/Cslite/agent/internal/config"
 )
@@ -209,19 +212,29 @@ post=""
 url=""
 h1=""
 h2=""
+h3=""
+h4=""
+h5=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -O) out="$2"; shift 2 ;;
     --post-data=*) post="${1#--post-data=}"; shift ;;
-    --header=*) if [ -z "$h1" ]; then h1="${1#--header=}"; else h2="${1#--header=}"; fi; shift ;;
+    --header=*)
+      hv="${1#--header=}"
+      if [ -z "$h1" ]; then h1="$hv"
+      elif [ -z "$h2" ]; then h2="$hv"
+      elif [ -z "$h3" ]; then h3="$hv"
+      elif [ -z "$h4" ]; then h4="$hv"
+      else h5="$hv"; fi
+      shift ;;
     -q) shift ;;
     *) url="$1"; shift ;;
   esac
 done
 if [ -n "$post" ]; then
-  code=$(curl -sS -o "$out.tmp" -w "%{http_code}" -X POST ${h1:+-H "$h1"} ${h2:+-H "$h2"} -d "$post" "$url")
+  code=$(curl -sS -o "$out.tmp" -w "%{http_code}" -X POST ${h1:+-H "$h1"} ${h2:+-H "$h2"} ${h3:+-H "$h3"} ${h4:+-H "$h4"} ${h5:+-H "$h5"} -d "$post" "$url")
 else
-  code=$(curl -sS -o "$out.tmp" -w "%{http_code}" ${h1:+-H "$h1"} ${h2:+-H "$h2"} "$url")
+  code=$(curl -sS -o "$out.tmp" -w "%{http_code}" ${h1:+-H "$h1"} ${h2:+-H "$h2"} ${h3:+-H "$h3"} ${h4:+-H "$h4"} ${h5:+-H "$h5"} "$url")
 fi
 if [ "$code" = "404" ]; then
   rm -f "$out.tmp" "$out"
@@ -352,7 +365,7 @@ func TestInstallScriptPipedFallbackToLite(t *testing.T) {
 			"--server", srv.URL,
 			"--key", "ak_test_pipe",
 			"--device-id", "dev_test",
-			"--name", "openwrt-hz-ys",
+			"--name", "openwrt-edge-01",
 			"--bin-url", srv.URL+"/bad-bin",
 		)
 		cmd.Stdin = bytes.NewReader(installBytes)
@@ -392,7 +405,7 @@ func TestInstallScriptPipedFallbackToLite(t *testing.T) {
 		if err := json.Unmarshal(cfgRaw, &cfg); err != nil {
 			t.Fatalf("invalid config.json: %v\n%s", err, string(cfgRaw))
 		}
-		if cfg["server"] != srv.URL || cfg["api_key"] != "ak_test_pipe" || cfg["device_id"] != "dev_test" || cfg["name"] != "openwrt-hz-ys" {
+		if cfg["server"] != srv.URL || cfg["api_key"] != "ak_test_pipe" || cfg["device_id"] != "dev_test" || cfg["name"] != "openwrt-edge-01" {
 			t.Fatalf("unexpected config.json contents: %v", cfg)
 		}
 
@@ -413,8 +426,8 @@ func TestInstallScriptPipedFallbackToLite(t *testing.T) {
 		if got, _ := regDevID.Load().(string); got != "dev_test" {
 			t.Fatalf("registered device_id=%q, want dev_test", got)
 		}
-		if got, _ := regName.Load().(string); got != "openwrt-hz-ys" {
-			t.Fatalf("registered name=%q, want openwrt-hz-ys", got)
+		if got, _ := regName.Load().(string); got != "openwrt-edge-01" {
+			t.Fatalf("registered name=%q, want openwrt-edge-01", got)
 		}
 	})
 
@@ -733,7 +746,7 @@ func TestLiteShellNoJshnSelfHealAndJsonQuote(t *testing.T) {
 	t.Run("cmd_install self-heals corrupt config.json and state.json", func(t *testing.T) {
 		cfgDir := t.TempDir()
 		corruptCfg := `{
-  "server": { "v": "https:\/\/cs.xrsec.fun" ,
+  "server": { "v": "https:\/\/ctrl.example.com" ,
   "api_key": { "v": "ak_old_corrupt" ,
   "name": { "v": "old-router" ,
   "device_id": { "v": "dev_old" ,
@@ -745,7 +758,7 @@ func TestLiteShellNoJshnSelfHealAndJsonQuote(t *testing.T) {
 		corruptState := `{
   "agent_id": { "v": "ag_bad" ,
   "device_id": { "v": "dev_bad" ,
-  "server_url": { "v": "https:\/\/cs.xrsec.fun\/api"
+  "server_url": { "v": "https:\/\/ctrl.example.com\/api"
 }
 `
 		cfgPath := filepath.Join(cfgDir, "config.json")
@@ -758,10 +771,10 @@ func TestLiteShellNoJshnSelfHealAndJsonQuote(t *testing.T) {
 		}
 
 		cmd := osexec.Command("sh", liteScript, "install",
-			"--server", "https://cs.xrsec.fun",
+			"--server", "https://ctrl.example.com",
 			"--key", "ak_live_test_123",
-			"--device-id", "dev_4c75175ca92add5c",
-			"--name", "openwrt-hz-ys",
+			"--device-id", "dev_openwrt_test_01",
+			"--name", "openwrt-edge-01",
 		)
 		cmd.Env = []string{
 			"PATH=" + os.Getenv("PATH"),
@@ -799,10 +812,10 @@ func TestLiteShellNoJshnSelfHealAndJsonQuote(t *testing.T) {
 		if err := json.Unmarshal(fixedRaw, &cfg); err != nil {
 			t.Fatalf("invalid config.json: %v\n%s", err, fixedStr)
 		}
-		if cfg.Server != "https://cs.xrsec.fun" ||
+		if cfg.Server != "https://ctrl.example.com" ||
 			cfg.APIKey != "ak_live_test_123" ||
-			cfg.DeviceID != "dev_4c75175ca92add5c" ||
-			cfg.Name != "openwrt-hz-ys" ||
+			cfg.DeviceID != "dev_openwrt_test_01" ||
+			cfg.Name != "openwrt-edge-01" ||
 			cfg.PollInterval != 5 ||
 			cfg.HeartbeatInterval != 60 ||
 			cfg.LogLevel != "info" {
@@ -828,7 +841,7 @@ func TestLiteShellNoJshnSelfHealAndJsonQuote(t *testing.T) {
 		}
 
 		cmd := osexec.Command("sh", liteScript, "install",
-			"--server", "https://cs.xrsec.fun",
+			"--server", "https://ctrl.example.com",
 			"--key", "ak_fresh_456",
 		)
 		cmd.Env = []string{
@@ -857,7 +870,7 @@ func TestLiteShellNoJshnSelfHealAndJsonQuote(t *testing.T) {
 		if err := json.Unmarshal(fixedRaw, &cfg); err != nil {
 			t.Fatalf("invalid config.json: %v\n%s", err, string(fixedRaw))
 		}
-		if cfg.Server != "https://cs.xrsec.fun" ||
+		if cfg.Server != "https://ctrl.example.com" ||
 			cfg.APIKey != "ak_fresh_456" ||
 			cfg.DeviceID != "" ||
 			cfg.Name != "" ||
@@ -871,10 +884,10 @@ func TestLiteShellNoJshnSelfHealAndJsonQuote(t *testing.T) {
 	t.Run("json_quote handles URLs, quotes, and backslashes as valid JSON", func(t *testing.T) {
 		libPath := extractLiteLibrary(t)
 		cases := []string{
-			"https://cs.xrsec.fun",
+			"https://ctrl.example.com",
 			`edge "router" 01`,
 			`C:\openwrt\bin\agent`,
-			`mix "quotes" and \backslashes\ and https://cs.xrsec.fun/i`,
+			`mix "quotes" and \backslashes\ and https://ctrl.example.com/i`,
 			"100%\tok",
 			"",
 		}
@@ -1542,6 +1555,7 @@ printf '%s|%s|%s|%s\n' "$SYNC0" "$LAST_HB_SYNC" "$POLL_INTERVAL" "$HEARTBEAT_INT
 		"PATH=" + os.Getenv("PATH"),
 		"TMPDIR=" + cfgDir,
 		"CSLITE_CONFIG_DIR=" + cfgDir,
+		"CSLITE_METRICS_PRIME_DELAY=0",
 	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -1597,5 +1611,559 @@ printf '%s|%s|%s|%s\n' "$SYNC0" "$LAST_HB_SYNC" "$POLL_INTERVAL" "$HEARTBEAT_INT
 	}
 	if parts[2] != "15" || parts[3] != "300" {
 		t.Fatalf("expected server-pushed intervals 15/300, got %s/%s", parts[2], parts[3])
+	}
+}
+
+func TestLiteShellMetricsPersistAcrossHeartbeatAndPoll(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell test")
+	}
+
+	libPath := extractLiteLibrary(t)
+
+	writeProcFixtures := func(t *testing.T, dir string, userJiffies, idleJiffies, loRX, loTX, ethRX, ethTX uint64) (string, string) {
+		t.Helper()
+		statPath := filepath.Join(dir, "proc_stat")
+		netPath := filepath.Join(dir, "proc_net_dev")
+		statContent := "cpu  " +
+			strings.Join([]string{
+				strconv.FormatUint(userJiffies, 10),
+				"1000",
+				"50000",
+				strconv.FormatUint(idleJiffies, 10),
+				"10000",
+				"0",
+				"500",
+				"0",
+				"0",
+				"0",
+			}, " ") + "\n" +
+			"cpu0 50000 500 25000 1000000 5000 0 250 0 0 0\n"
+		netContent := "Inter-|   Receive                                                |  Transmit\n" +
+			" face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n" +
+			"    lo: " + strconv.FormatUint(loRX, 10) + " 1000 0 0 0 0 0 0 " + strconv.FormatUint(loTX, 10) + " 1000 0 0 0 0 0 0\n" +
+			"  eth0: " + strconv.FormatUint(ethRX, 10) + " 18000000 0 0 0 0 0 0 " + strconv.FormatUint(ethTX, 10) + " 15000000 0 0 0 0 0 0\n"
+		if err := os.WriteFile(statPath, []byte(statContent), 0644); err != nil {
+			t.Fatalf("write proc_stat: %v", err)
+		}
+		if err := os.WriteFile(netPath, []byte(netContent), 0644); err != nil {
+			t.Fatalf("write proc_net_dev: %v", err)
+		}
+		return statPath, netPath
+	}
+
+	t.Run("prime delay=1 populates baseline on first send_heartbeat and emits valid metrics JSON", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		statPath, netPath := writeProcFixtures(t, tmpDir, 100000, 2000000, 123456789, 123456789, 24526739275, 20558994981)
+
+		var mu sync.Mutex
+		var hbPayloads []map[string]any
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			raw, _ := io.ReadAll(r.Body)
+			var body map[string]any
+			_ = json.Unmarshal(raw, &body)
+			mu.Lock()
+			if r.URL.Path == "/api/agent/heartbeat" {
+				hbPayloads = append(hbPayloads, body)
+			}
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 20000, "data": map[string]any{"status": "ok"}})
+		}))
+		defer srv.Close()
+
+		script := `
+. "$1"
+SERVER="$2"
+API_KEY="ak_prime_test"
+AGENT_ID="ag_prime_1"
+BOUND_DEVICE_ID="dev_prime_1"
+probe_http_client
+normalize_server_url "$SERVER"
+send_heartbeat || exit 11
+sleep() {
+	echo "unexpected second sleep after baseline primed" >&2
+	exit 99
+}
+collect_metrics
+compat_json="$(collect_metrics_json)"
+[ -n "$METRICS_JSON" ] || exit 13
+[ -n "$compat_json" ] || exit 14
+printf '%s|%s|%s|%s|%s\n' "$PREV_CPU_TOTAL" "$PREV_CPU_IDLE" "$PREV_NET_RX" "$PREV_NET_TX" "$PREV_NET_TS"
+`
+		start := time.Now()
+		cmd := osexec.Command("sh", "-c", script, "sh", libPath, srv.URL)
+		cmd.Env = []string{
+			"PATH=" + os.Getenv("PATH"),
+			"TMPDIR=" + tmpDir,
+			"CSLITE_CONFIG_DIR=" + tmpDir,
+			"CSLITE_PROC_STAT=" + statPath,
+			"CSLITE_PROC_NET_DEV=" + netPath,
+			"CSLITE_METRICS_PRIME_DELAY=1",
+		}
+		out, err := cmd.CombinedOutput()
+		elapsed := time.Since(start)
+		if err != nil {
+			t.Fatalf("prime send_heartbeat failed: %v\n%s", err, string(out))
+		}
+		if elapsed < 900*time.Millisecond {
+			t.Fatalf("expected >=900ms prime delay on first send_heartbeat, took %v", elapsed)
+		}
+
+		parts := strings.Split(strings.TrimSpace(string(out)), "|")
+		if len(parts) != 5 {
+			t.Fatalf("unexpected persisted baseline output %q", string(out))
+		}
+		if parts[0] != "2161500" || parts[1] != "2010000" {
+			t.Fatalf("unexpected PREV_CPU total/idle = %s/%s, want 2161500/2010000", parts[0], parts[1])
+		}
+		if parts[2] != "24526739275" || parts[3] != "20558994981" || parts[4] == "" || parts[4] == "0" {
+			t.Fatalf("unexpected PREV_NET rx/tx/ts = %s/%s/%s", parts[2], parts[3], parts[4])
+		}
+
+		mu.Lock()
+		defer mu.Unlock()
+		if len(hbPayloads) != 1 {
+			t.Fatalf("expected 1 heartbeat payload, got %d", len(hbPayloads))
+		}
+		metricsMap, ok := hbPayloads[0]["metrics"].(map[string]any)
+		if !ok || len(metricsMap) == 0 {
+			t.Fatalf("expected valid metrics map in heartbeat, got %v", hbPayloads[0])
+		}
+		for _, k := range []string{"cpu_usage", "memory_used", "memory_total", "memory_percent", "disk_usage", "disk_total", "network_in", "network_out", "uptime"} {
+			if _, exists := metricsMap[k]; !exists {
+				t.Fatalf("missing metric key %q in %v", k, metricsMap)
+			}
+		}
+	})
+
+	t.Run("daemon sequence persists deltas across send_heartbeat and poll_once 1 including 40010 retry", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		statPath, netPath := writeProcFixtures(t, tmpDir, 100000, 2000000, 123456789, 123456789, 24526739275, 20558994981)
+		// Prepare t1 fixtures: +404 total (+16 user, +388 idle) => 16/404*100 = 3.96%
+		// +153128 rx, +137513 tx over dt=2s => ~75 KB/s in, ~67 KB/s out; lo jumps massively to ensure it is skipped.
+		t1Dir := filepath.Join(tmpDir, "t1")
+		if err := os.MkdirAll(t1Dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		statPathT1, netPathT1 := writeProcFixtures(t, t1Dir, 100016, 2000388, 999999999, 999999999, 24526892403, 20559132494)
+
+		var mu sync.Mutex
+		var hbPayloads []map[string]any
+		var pollPayloads []map[string]any
+		var regCount atomic.Int32
+		var pollAttempt atomic.Int32
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			raw, _ := io.ReadAll(r.Body)
+			var body map[string]any
+			_ = json.Unmarshal(raw, &body)
+			switch r.URL.Path {
+			case "/api/agent/register":
+				regCount.Add(1)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"code": 20000,
+					"data": map[string]any{"agent_id": "ag_re_1", "device_id": "dev_re_1"},
+				})
+			case "/api/agent/heartbeat":
+				mu.Lock()
+				hbPayloads = append(hbPayloads, body)
+				mu.Unlock()
+				_ = json.NewEncoder(w).Encode(map[string]any{"code": 20000, "data": map[string]any{"status": "ok"}})
+			case "/api/agent/commands":
+				mu.Lock()
+				pollPayloads = append(pollPayloads, body)
+				mu.Unlock()
+				if pollAttempt.Add(1) == 1 {
+					w.WriteHeader(http.StatusNotFound)
+					_, _ = w.Write([]byte(`{"code":40010,"message":"device not found"}`))
+					return
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"code": 20000, "data": map[string]any{"commands": []any{}}})
+			}
+		}))
+		defer srv.Close()
+
+		script := `
+. "$1"
+date() {
+	if [ "${1:-}" = "+%s" ]; then
+		printf '%s\n' "1700000000"
+	else
+		command date "$@"
+	fi
+}
+SERVER="$2"
+API_KEY="ak_daemon_test"
+AGENT_ID="ag_daemon_1"
+BOUND_DEVICE_ID="dev_daemon_1"
+probe_http_client
+normalize_server_url "$SERVER"
+send_heartbeat || exit 11
+cp "$3" "$PROC_STAT_FILE"
+cp "$4" "$PROC_NET_DEV_FILE"
+PREV_NET_TS=$((PREV_NET_TS - 2))
+poll_once 1 || exit 12
+`
+		cmd := osexec.Command("sh", "-c", script, "sh", libPath, srv.URL, statPathT1, netPathT1)
+		cmd.Env = []string{
+			"PATH=" + os.Getenv("PATH"),
+			"TMPDIR=" + tmpDir,
+			"CSLITE_CONFIG_DIR=" + tmpDir,
+			"CSLITE_PROC_STAT=" + statPath,
+			"CSLITE_PROC_NET_DEV=" + netPath,
+			"CSLITE_METRICS_PRIME_DELAY=0",
+		}
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("daemon sequence failed: %v\n%s", err, string(out))
+		}
+
+		if regCount.Load() != 1 {
+			t.Fatalf("expected 1 re-register after 40010, got %d", regCount.Load())
+		}
+
+		mu.Lock()
+		defer mu.Unlock()
+		if len(hbPayloads) != 1 || len(pollPayloads) != 2 {
+			t.Fatalf("unexpected payload counts hb=%d poll=%d", len(hbPayloads), len(pollPayloads))
+		}
+
+		for i, p := range pollPayloads {
+			m, ok := p["metrics"].(map[string]any)
+			if !ok {
+				t.Fatalf("poll[%d] missing metrics: %v", i, p)
+			}
+			cpu, _ := m["cpu_usage"].(float64)
+			netIn, _ := m["network_in"].(float64)
+			netOut, _ := m["network_out"].(float64)
+			if cpu < 3.8 || cpu > 4.2 {
+				t.Fatalf("poll[%d] cpu_usage = %v, want between 3.8 and 4.2 (~3.96)", i, cpu)
+			}
+			if netIn != 75 {
+				t.Fatalf("poll[%d] network_in = %v, want 75", i, netIn)
+			}
+			if netOut != 67 {
+				t.Fatalf("poll[%d] network_out = %v, want 67", i, netOut)
+			}
+		}
+	})
+
+	t.Run("awk numeric coercion handles 10x digit boundary (999000 -> 1152128)", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		statPath, netPath := writeProcFixtures(t, tmpDir, 100000, 2000000, 0, 0, 999000, 99900)
+		t1Dir := filepath.Join(tmpDir, "t1")
+		if err := os.MkdirAll(t1Dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		statPathT1, netPathT1 := writeProcFixtures(t, t1Dir, 100016, 2000388, 0, 0, 1152128, 237413)
+
+		var mu sync.Mutex
+		var pollPayloads []map[string]any
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			raw, _ := io.ReadAll(r.Body)
+			var body map[string]any
+			_ = json.Unmarshal(raw, &body)
+			if r.URL.Path == "/api/agent/commands" {
+				mu.Lock()
+				pollPayloads = append(pollPayloads, body)
+				mu.Unlock()
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 20000, "data": map[string]any{"commands": []any{}}})
+		}))
+		defer srv.Close()
+
+		script := `
+. "$1"
+date() {
+	if [ "${1:-}" = "+%s" ]; then
+		printf '%s\n' "1700000000"
+	else
+		command date "$@"
+	fi
+}
+SERVER="$2"
+API_KEY="ak_awk_edge"
+AGENT_ID="ag_awk_1"
+BOUND_DEVICE_ID="dev_awk_1"
+probe_http_client
+normalize_server_url "$SERVER"
+send_heartbeat || exit 11
+cp "$3" "$PROC_STAT_FILE"
+cp "$4" "$PROC_NET_DEV_FILE"
+PREV_NET_TS=$((PREV_NET_TS - 2))
+poll_once 1 || exit 12
+`
+		cmd := osexec.Command("sh", "-c", script, "sh", libPath, srv.URL, statPathT1, netPathT1)
+		cmd.Env = []string{
+			"PATH=" + os.Getenv("PATH"),
+			"TMPDIR=" + tmpDir,
+			"CSLITE_CONFIG_DIR=" + tmpDir,
+			"CSLITE_PROC_STAT=" + statPath,
+			"CSLITE_PROC_NET_DEV=" + netPath,
+			"CSLITE_METRICS_PRIME_DELAY=0",
+		}
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("digit boundary test failed: %v\n%s", err, string(out))
+		}
+
+		mu.Lock()
+		defer mu.Unlock()
+		if len(pollPayloads) != 1 {
+			t.Fatalf("expected 1 poll payload, got %d", len(pollPayloads))
+		}
+		m, ok := pollPayloads[0]["metrics"].(map[string]any)
+		if !ok {
+			t.Fatalf("poll missing metrics: %v", pollPayloads[0])
+		}
+		if netIn, _ := m["network_in"].(float64); netIn != 75 {
+			t.Fatalf("10x digit boundary network_in = %v, want 75 (string compare bug if 0)", netIn)
+		}
+		if netOut, _ := m["network_out"].(float64); netOut != 67 {
+			t.Fatalf("10x digit boundary network_out = %v, want 67", netOut)
+		}
+	})
+}
+
+func TestLiteShellHeadersAndOpenRCInstaller(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell test")
+	}
+
+	liteScript, err := filepath.Abs(filepath.Join("openwrt", "cslite-agent-lite.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	liteBytes, err := os.ReadFile(liteScript)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("cslite-agent-lite sends CSLite-Agent UA and telemetry Referer under curl and openssl", func(t *testing.T) {
+		var mu sync.Mutex
+		type hdrPair struct {
+			path string
+			ua   string
+			ref  string
+		}
+		var reqs []hdrPair
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			reqs = append(reqs, hdrPair{
+				path: r.URL.Path,
+				ua:   r.Header.Get("User-Agent"),
+				ref:  r.Header.Get("Referer"),
+			})
+			mu.Unlock()
+			switch r.URL.Path {
+			case "/api/agent/register":
+				_ = json.NewEncoder(w).Encode(map[string]any{"code": 20000, "data": map[string]any{"agent_id": "ag_hdr_1", "device_id": "dev_hdr_1"}})
+			case "/api/agent/heartbeat":
+				_ = json.NewEncoder(w).Encode(map[string]any{"code": 20000, "data": map[string]any{"status": "ok"}})
+			case "/api/agent/commands":
+				_ = json.NewEncoder(w).Encode(map[string]any{"code": 20000, "data": map[string]any{"commands": []any{}}})
+			}
+		}))
+		defer srv.Close()
+
+		cfgDir := t.TempDir()
+		cmd := osexec.Command("sh", liteScript, "run", "--server", srv.URL, "--key", "ak_hdr_curl", "--once")
+		cmd.Env = []string{
+			"PATH=" + os.Getenv("PATH"),
+			"TMPDIR=" + cfgDir,
+			"CSLITE_CONFIG_DIR=" + cfgDir,
+			"CSLITE_METRICS_PRIME_DELAY=0",
+		}
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("lite curl --once failed: %v\n%s", err, string(out))
+		}
+
+		mu.Lock()
+		if len(reqs) < 3 {
+			mu.Unlock()
+			t.Fatalf("expected >=3 curl requests, got %d", len(reqs))
+		}
+		for _, rq := range reqs {
+			if !strings.HasPrefix(rq.ua, "CSLite-Agent/lite-") {
+				mu.Unlock()
+				t.Fatalf("%s User-Agent = %q, want CSLite-Agent/lite-*", rq.path, rq.ua)
+			}
+			if rq.ref != srv.URL+"/agent/telemetry" {
+				mu.Unlock()
+				t.Fatalf("%s Referer = %q, want %q", rq.path, rq.ref, srv.URL+"/agent/telemetry")
+			}
+		}
+		reqs = nil
+		mu.Unlock()
+
+		// Also verify raw HTTP builder used by openssl/nc path honors custom --user-agent and --referer.
+		libPath := extractLiteLibrary(t)
+		cmdRaw := osexec.Command("sh", "-c", `. "$1" && BASE_URL="$2/api" && API_KEY="ak_raw" && USER_AGENT="CustomAgent/9.9" && REFERER="https://ref.test/p" && write_http_request POST /agent/heartbeat "host.test" "{}" 2`, "sh", libPath, srv.URL)
+		rawOut, err := cmdRaw.CombinedOutput()
+		if err != nil {
+			t.Fatalf("write_http_request failed: %v\n%s", err, string(rawOut))
+		}
+		rawStr := string(rawOut)
+		if !strings.Contains(rawStr, "User-Agent: CustomAgent/9.9\r\n") || !strings.Contains(rawStr, "Referer: https://ref.test/p\r\n") {
+			t.Fatalf("write_http_request missing custom UA/Referer:\n%s", rawStr)
+		}
+	})
+
+	t.Run("install.sh sends Installer UA/Referer and installs OpenRC init script on Alpine-like host", func(t *testing.T) {
+		var agentLiteUA, agentLiteRef string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/agent-lite.sh" {
+				agentLiteUA = r.Header.Get("User-Agent")
+				agentLiteRef = r.Header.Get("Referer")
+				_, _ = w.Write(liteBytes)
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer srv.Close()
+
+		libPath := extractInstallLibrary(t)
+		tmpRoot := t.TempDir()
+		binDir := filepath.Join(tmpRoot, "bin")
+		_ = os.MkdirAll(binDir, 0755)
+		rcLog := filepath.Join(tmpRoot, "rc.log")
+
+		for _, stubName := range []string{"openrc-run", "rc-update", "rc-service"} {
+			stubBody := "#!/bin/sh\necho \"" + stubName + " $*\" >> \"" + rcLog + "\"\nexit 0\n"
+			if err := os.WriteFile(filepath.Join(binDir, stubName), []byte(stubBody), 0755); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		dlDest := filepath.Join(tmpRoot, "dl.sh")
+		cfgFile := filepath.Join(tmpRoot, "etc/cslite-agent/config.json")
+		script := `
+. "$1"
+SERVER_BASE="$2"
+fetch_file "${SERVER_BASE}/agent-lite.sh" "$3" "curl" 10
+is_openrc || exit 21
+install_openrc_service "/usr/local/bin/cslite-agent" "$4/etc/cslite-agent" "$5" 0 "/bin/sh"
+`
+		cmd := osexec.Command("sh", "-c", script, "sh", libPath, srv.URL, dlDest, tmpRoot, cfgFile)
+		cmd.Env = []string{
+			"PATH=" + binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+			"CSLITE_OPENRC_ROOT=" + tmpRoot,
+		}
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("install.sh OpenRC test failed: %v\n%s", err, string(out))
+		}
+		if agentLiteUA != "CSLite-Installer/1.0" || agentLiteRef != srv.URL+"/install" {
+			t.Fatalf("unexpected installer headers: ua=%q ref=%q", agentLiteUA, agentLiteRef)
+		}
+		initData, err := os.ReadFile(filepath.Join(tmpRoot, "etc/init.d/cslite-agent"))
+		if err != nil {
+			t.Fatalf("read openrc init script: %v", err)
+		}
+		if !strings.Contains(string(initData), "#!/sbin/openrc-run") || !strings.Contains(string(initData), `pidfile="/run/cslite-agent.pid"`) {
+			t.Fatalf("unexpected openrc init script:\n%s", string(initData))
+		}
+		rcLogData, err := os.ReadFile(rcLog)
+		if err != nil {
+			t.Fatalf("read rc log: %v", err)
+		}
+		if !strings.Contains(string(rcLogData), "rc-update add cslite-agent default") || !strings.Contains(string(rcLogData), "rc-service cslite-agent restart") {
+			t.Fatalf("unexpected OpenRC service commands:\n%s", string(rcLogData))
+		}
+	})
+
+	t.Run("upgrade.sh --help and --dry-run detect full vs lite mode", func(t *testing.T) {
+		upgScript, err := filepath.Abs(filepath.Join("scripts", "upgrade.sh"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		helpOut, err := osexec.Command("sh", upgScript, "--help").CombinedOutput()
+		if err != nil || !strings.Contains(string(helpOut), "Usage: upgrade.sh") {
+			t.Fatalf("upgrade.sh --help failed: %v\n%s", err, string(helpOut))
+		}
+
+		tmpRoot := t.TempDir()
+		binDir := filepath.Join(tmpRoot, "bin")
+		cfgDir := filepath.Join(tmpRoot, "cfg")
+		_ = os.MkdirAll(binDir, 0755)
+		_ = os.MkdirAll(cfgDir, 0755)
+		cfgPath := filepath.Join(cfgDir, "config.json")
+		if err := os.WriteFile(cfgPath, []byte(`{"server":"https://ctrl.example.com/api","api_key":"ak_test"}`), 0600); err != nil {
+			t.Fatal(err)
+		}
+
+		// Mock lite installation first
+		liteBin := filepath.Join(binDir, "cslite-agent-lite")
+		if err := os.WriteFile(liteBin, []byte("#!/bin/sh\necho ok\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		dryLite := osexec.Command("sh", upgScript, "--dry-run", "--config", cfgPath)
+		dryLite.Env = []string{
+			"PATH=" + os.Getenv("PATH"),
+			"CSLITE_INSTALL_DIR=" + binDir,
+			"CSLITE_UPGRADE_OS=linux",
+			"CSLITE_UPGRADE_ARCH=amd64",
+		}
+		outLite, err := dryLite.CombinedOutput()
+		if err != nil {
+			t.Fatalf("upgrade.sh --dry-run (lite) failed: %v\n%s", err, string(outLite))
+		}
+		if !strings.Contains(string(outLite), "mode=lite") || !strings.Contains(string(outLite), "url=https://ctrl.example.com/agent-lite.sh") {
+			t.Fatalf("unexpected dry-run lite output:\n%s", string(outLite))
+		}
+
+		// Mock full Go binary takes precedence over lite unless --lite is forced
+		fullBin := filepath.Join(binDir, "cslite-agent")
+		if err := os.WriteFile(fullBin, []byte("\x7fELFmock"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		dryFull := osexec.Command("sh", upgScript, "--dry-run", "--config", cfgPath, "--version", "v1.1.0")
+		dryFull.Env = dryLite.Env
+		outFull, err := dryFull.CombinedOutput()
+		if err != nil {
+			t.Fatalf("upgrade.sh --dry-run (full) failed: %v\n%s", err, string(outFull))
+		}
+		if !strings.Contains(string(outFull), "mode=full") || !strings.Contains(string(outFull), "/releases/download/v1.1.0/cslite-agent-linux-amd64") {
+			t.Fatalf("unexpected dry-run full output:\n%s", string(outFull))
+		}
+
+		// Verify BusyBox HTTP-only wget is skipped by probe_downloader in assembled upgrade.sh
+		bbWget := filepath.Join(binDir, "wget")
+		if err := os.WriteFile(bbWget, []byte("#!/bin/sh\necho 'BusyBox v1.24 wget: Retrieve files via HTTP or FTP' >&2\nexit 1\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		libCheck := osexec.Command("sh", "-c", `
+			awk 'BEGIN{p=1} /^verify_upgrade_payload\(\)/{p=0} p{print}' "$1" > "$2"
+			. "$2" --
+			PATH="$3:$PATH" is_http_only_wget wget && got="$(PATH="$3:$PATH" probe_downloader)" && [ "$got" != "wget" ]
+		`, "sh", upgScript, filepath.Join(tmpRoot, "upg-lib.sh"), binDir)
+		if out, err := libCheck.CombinedOutput(); err != nil {
+			t.Fatalf("upgrade.sh is_http_only_wget check failed: %v\n%s", err, string(out))
+		}
+	})
+}
+
+func TestVersionConsistency(t *testing.T) {
+	verRaw, err := os.ReadFile("VERSION")
+	if err != nil {
+		t.Fatalf("read VERSION: %v", err)
+	}
+	want := strings.TrimSpace(string(verRaw))
+	if want == "" {
+		t.Fatal("agent/VERSION is empty")
+	}
+	if Version != want {
+		t.Fatalf("Go Version = %q, want %q from agent/VERSION", Version, want)
+	}
+	liteSh, err := os.ReadFile(filepath.Join("openwrt", "cslite-agent-lite.sh"))
+	if err != nil {
+		t.Fatalf("read cslite-agent-lite.sh: %v", err)
+	}
+	if !strings.Contains(string(liteSh), `VERSION="`+want+`"`) {
+		t.Fatalf("cslite-agent-lite.sh missing VERSION=%q", want)
+	}
+	litePs1, err := os.ReadFile(filepath.Join("scripts", "cslite-agent-lite.ps1"))
+	if err != nil {
+		t.Fatalf("read cslite-agent-lite.ps1: %v", err)
+	}
+	if !strings.Contains(string(litePs1), `$Version = "`+want+`"`) {
+		t.Fatalf("cslite-agent-lite.ps1 missing $Version = %q", want)
 	}
 }

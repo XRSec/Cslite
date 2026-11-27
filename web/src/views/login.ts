@@ -1,5 +1,5 @@
 import { api, ApiError } from '../api';
-import { fieldHtml } from '../components/ui';
+import { fieldHtml, hInp, hMut } from '../components/ui';
 import { icons } from '../icons';
 import { navigate, type RouteContext } from '../router';
 import { state, themeLabel, toast, toggleTheme } from '../state';
@@ -11,9 +11,9 @@ function themeBtnHtml(): string {
 
 export function renderLogin(ctx: RouteContext): void {
   ctx.root.innerHTML =
-    `<div class="login-wrap"><div class="login-card"><div class="login-top"><div class="brand-row"><span class="brand-mark">${icons.brand()}</span><div><h1 class="login-title">Cslite</h1><div class="mut txs">轻量多平台主机与边缘设备控制台</div></div></div><button type="button" class="theme-pill" id="login-theme-btn" title="切换主题">${themeBtnHtml()}</button></div>` +
+    `<div class="login-wrap"><div class="login-card"><div class="login-top"><div class="brand-row"><span class="brand-mark">${icons.brand()}</span><div><h1 class="login-title">CSLite</h1>${hMut('轻量多平台主机与边缘设备控制台')}</div></div><button type="button" class="theme-pill" id="login-theme-btn" title="切换主题">${themeBtnHtml()}</button></div>` +
     `<div class="alert alert-err hidden" id="login-err"></div>` +
-    `<form id="login-form" class="smd">${fieldHtml('login-user', '用户名', '<input id="login-user" class="input" type="text" autocomplete="username" required placeholder="admin" autofocus>')}${fieldHtml('login-pass', '密码', '<input id="login-pass" class="input" type="password" autocomplete="current-password" required placeholder="••••••••">')}<button type="submit" class="btn bp bbl" id="login-submit">登录控制台</button></form>` +
+    `<form id="login-form" class="smd">${fieldHtml('login-user', '用户名', hInp('login-user', 'text', 'autocomplete="username" required placeholder="admin" autofocus'))}${fieldHtml('login-pass', '密码', hInp('login-pass', 'password', 'autocomplete="current-password" required placeholder="••••••••"'))}<button type="submit" class="btn bp bbl" id="login-submit">登录控制台</button></form>` +
     `<div class="login-foot mut txs"><span>默认账号: <code class="mono">admin</code> / <code class="mono">admin</code></span><button type="button" class="link-btn txs" id="fill-demo">一键填充</button></div></div></div>`;
 
   const themeBtn = ctx.root.querySelector('#login-theme-btn') as HTMLButtonElement | null;

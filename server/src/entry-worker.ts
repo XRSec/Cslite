@@ -4,6 +4,7 @@ import { createD1Driver } from './db/d1';
 import type { SqlDriver } from './db/driver';
 import { ensureMigrated } from './db/migrate';
 import { createTursoDriver } from './db/turso';
+import { maybeRunScheduledCleanup } from './lib/cleanup';
 
 export interface WorkerEnv {
   DB?: D1Database;
@@ -18,6 +19,11 @@ export interface WorkerEnv {
   CSLITE_SESSION_TTL?: string;
   CSLITE_COOKIE_SECURE?: string;
   CSLITE_DEFAULT_TIMEOUT?: string;
+  CSLITE_TIMEZONE?: string;
+  TZ?: string;
+  CSLITE_LOG_RETENTION_DAYS?: string;
+  CSLITE_ORIGIN_SECRET?: string;
+  CSLITE_ORIGIN_SECRET_HEADER?: string;
   [key: string]: unknown;
 }
 
@@ -94,5 +100,6 @@ export default {
     if (!driver) return;
     const config = buildConfig(toStringEnv(env), 'cloudflare-worker');
     await ensureMigrated(driver, config);
+    await maybeRunScheduledCleanup(driver, config);
   },
 };

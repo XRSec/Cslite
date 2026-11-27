@@ -55,6 +55,7 @@ func IsDeviceNotFound(err error) bool {
 type Options struct {
 	HTTPClient    *http.Client
 	UserAgent     string
+	Referer       string
 	RetryBackoffs []time.Duration
 }
 
@@ -64,7 +65,27 @@ type Client struct {
 	apiKey        string
 	httpClient    *http.Client
 	userAgent     string
+	referer       string
 	retryBackoffs []time.Duration
+}
+
+// DefaultUserAgent builds the canonical CSLite Agent User-Agent header value.
+func DefaultUserAgent(version string) string {
+	v := strings.TrimSpace(version)
+	if v == "" {
+		v = "1.0"
+	}
+	return "CSLite-Agent/" + v
+}
+
+// DefaultReferer builds the canonical telemetry Referer header value from a normalized /api URL.
+func DefaultReferer(normalizedBaseURL string) string {
+	base := strings.TrimRight(strings.TrimSpace(normalizedBaseURL), "/")
+	base = strings.TrimSuffix(base, "/api")
+	if base == "" {
+		return ""
+	}
+	return base + "/agent/telemetry"
 }
 
 // NormalizeServerURL strips trailing slashes and appends /api unless already present.
@@ -114,9 +135,13 @@ func New(serverURL, apiKey string, opts ...Options) (*Client, error) {
 			Timeout: 30 * time.Second,
 		}
 	}
-	ua := opt.UserAgent
+	ua := strings.TrimSpace(opt.UserAgent)
 	if ua == "" {
-		ua = "cslite-agent/1.0"
+		ua = DefaultUserAgent("1.0")
+	}
+	ref := strings.TrimSpace(opt.Referer)
+	if ref == "" {
+		ref = DefaultReferer(normalized)
 	}
 	backoffs := defaultBackoffs
 	if opt.RetryBackoffs != nil {
@@ -128,6 +153,7 @@ func New(serverURL, apiKey string, opts ...Options) (*Client, error) {
 		apiKey:        strings.TrimSpace(apiKey),
 		httpClient:    hc,
 		userAgent:     ua,
+		referer:       ref,
 		retryBackoffs: backoffs,
 	}, nil
 }
@@ -241,6 +267,9 @@ func (c *Client) doJSON(ctx context.Context, method, path string, reqBody any, d
 	}
 	req.Header.Set("X-API-Key", c.apiKey)
 	req.Header.Set("User-Agent", c.userAgent)
+	if c.referer != "" {
+		req.Header.Set("Referer", c.referer)
+	}
 	req.Header.Set("Accept", "application/json")
 	if reqBody != nil {
 		req.Header.Set("Content-Type", "application/json")

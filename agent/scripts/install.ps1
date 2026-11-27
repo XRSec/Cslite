@@ -2,8 +2,8 @@
 .SYNOPSIS
     Auto-detecting Windows installer for Cslite Agent (Go binary or PowerShell lite fallback).
 .EXAMPLE
-    .\install.ps1 -Server https://cs.xrsec.fun -Key ak_live_xxx
-    $k="ak_live_xxx";$d="dev_123";irm https://cs.xrsec.fun/i.ps1|iex
+    .\install.ps1 -Server https://ctrl.example.com -Key ak_live_xxx
+    $k="ak_live_xxx";$d="dev_123";irm https://ctrl.example.com/i.ps1|iex
 #>
 [CmdletBinding()]
 param(
@@ -154,10 +154,14 @@ function Download-Resource {
         Copy-Item -LiteralPath $Source -Destination $Dest -Force
         return
     }
+    $dlHeaders = @{}
+    if (-not [string]::IsNullOrWhiteSpace($ServerBase) -and $Source.StartsWith("$ServerBase/")) {
+        $dlHeaders["Referer"] = "$ServerBase/install"
+    }
     if ($PSVersionTable -and $PSVersionTable.PSVersion.Major -ge 6) {
-        Invoke-WebRequest -Uri $Source -OutFile $Dest -TimeoutSec $TimeoutSec
+        Invoke-WebRequest -Uri $Source -OutFile $Dest -UserAgent "CSLite-Installer/1.0" -Headers $dlHeaders -TimeoutSec $TimeoutSec
     } else {
-        Invoke-WebRequest -Uri $Source -OutFile $Dest -UseBasicParsing -TimeoutSec $TimeoutSec
+        Invoke-WebRequest -Uri $Source -OutFile $Dest -UseBasicParsing -UserAgent "CSLite-Installer/1.0" -Headers $dlHeaders -TimeoutSec $TimeoutSec
     }
 }
 

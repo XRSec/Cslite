@@ -4,6 +4,7 @@ import {
   UserRole,
   type AuditLogDTO,
   type CommandLogDTO,
+  type CommandType,
   type DeviceLogDTO,
   type ExecutionStatus,
 } from '../../../shared/types';
@@ -11,11 +12,15 @@ import type { SqlParam } from '../db/driver';
 import { fail, ok, parseJsonSafe, parsePagination } from '../lib/response';
 import { requireAdmin, requireAuth, type AppEnv } from '../middleware/auth';
 
+const VALID_COMMAND_TYPES = new Set<CommandType>(['immediate', 'once', 'cron']);
+
 interface CommandLogRow {
   result_id: string;
   execution_id: string;
   command_id: string;
   command_name: string;
+  command_type: CommandType;
+  command_content: string | null;
   device_id: string;
   device_name: string | null;
   status: ExecutionStatus;
@@ -58,6 +63,8 @@ export function createLogRoutes(): Hono<AppEnv> {
     const commandId = c.req.query('command_id')?.trim();
     const deviceId = c.req.query('device_id')?.trim();
     const status = c.req.query('status')?.trim();
+    const typeFilter = c.req.query('type')?.trim();
+    const sourceFilter = c.req.query('source')?.trim().toLowerCase();
 
     const where: string[] = [];
     const params: SqlParam[] = [];
@@ -78,6 +85,29 @@ export function createLogRoutes(): Hono<AppEnv> {
       where.push('er.status = ?');
       params.push(status);
     }
+    if (sourceFilter === 'health') {
+      where.push("(c.name LIKE 'health-probe:%' OR c.name LIKE 'diag-%:%')");
+    }
+    if (typeFilter) {
+      const validTypes = [
+        ...new Set(
+          typeFilter
+            .split(',')
+            .map((t) => t.trim())
+            .filter((t): t is CommandType => VALID_COMMAND_TYPES.has(t as CommandType)),
+        ),
+      ];
+      if (validTypes.length === 1) {
+        where.push('c.type = ?');
+        params.push(validTypes[0]!);
+      } else if (validTypes.length > 1) {
+        where.push(`c.type IN (${validTypes.map(() => '?').join(', ')})`);
+        params.push(...validTypes);
+      } else {
+        where.push('c.type = ?');
+        params.push(typeFilter);
+      }
+    }
 
     const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
     const countRow = await driver.get<{ total: number }>(
@@ -85,7 +115,7 @@ export function createLogRoutes(): Hono<AppEnv> {
       params,
     );
     const rows = await driver.all<CommandLogRow>(
-      `SELECT er.id AS result_id, er.execution_id, er.command_id, c.name AS command_name, er.device_id, d.name AS device_name, er.status, er.exit_code, er.output, er.started_at, er.completed_at, er.created_at FROM execution_results er INNER JOIN commands c ON c.id = er.command_id LEFT JOIN devices d ON d.id = er.device_id ${whereSql} ORDER BY er.created_at DESC LIMIT ? OFFSET ?`,
+      `SELECT er.id AS result_id, er.execution_id, er.command_id, c.name AS command_name, c.type AS command_type, c.content AS command_content, er.device_id, d.name AS device_name, er.status, er.exit_code, er.output, er.started_at, er.completed_at, er.created_at FROM execution_results er INNER JOIN commands c ON c.id = er.command_id LEFT JOIN devices d ON d.id = er.device_id ${whereSql} ORDER BY er.created_at DESC LIMIT ? OFFSET ?`,
       [...params, limit, offset],
     );
 
@@ -94,6 +124,8 @@ export function createLogRoutes(): Hono<AppEnv> {
       execution_id: r.execution_id,
       command_id: r.command_id,
       command_name: r.command_name,
+      command_type: r.command_type,
+      command_content: (r.command_content ?? '').slice(0, 240),
       device_id: r.device_id,
       device_name: r.device_name ?? undefined,
       status: r.status,
@@ -119,6 +151,7 @@ export function createLogRoutes(): Hono<AppEnv> {
 
     const deviceId = c.req.query('device_id')?.trim();
     const typeFilter = c.req.query('type')?.trim();
+    const excludeTypeFilter = c.req.query('exclude_type')?.trim();
 
     const where: string[] = [];
     const params: SqlParam[] = [];
@@ -132,8 +165,40 @@ export function createLogRoutes(): Hono<AppEnv> {
       params.push(deviceId);
     }
     if (typeFilter) {
-      where.push('dl.type = ?');
-      params.push(typeFilter);
+      const types = [
+        ...new Set(
+          typeFilter
+            .split(',')
+            .map((t) => t.trim())
+            .filter(Boolean),
+        ),
+      ];
+      if (types.length === 1) {
+        where.push('dl.type = ?');
+        params.push(types[0]!);
+      } else if (types.length > 1) {
+        where.push(`dl.type IN (${types.map(() => '?').join(', ')})`);
+        params.push(...types);
+      } else {
+        where.push('dl.type = ?');
+        params.push(typeFilter);
+      }
+    } else if (excludeTypeFilter) {
+      const excluded = [
+        ...new Set(
+          excludeTypeFilter
+            .split(',')
+            .map((t) => t.trim())
+            .filter(Boolean),
+        ),
+      ];
+      if (excluded.length === 1) {
+        where.push('dl.type != ?');
+        params.push(excluded[0]!);
+      } else if (excluded.length > 1) {
+        where.push(`dl.type NOT IN (${excluded.map(() => '?').join(', ')})`);
+        params.push(...excluded);
+      }
     }
 
     const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';

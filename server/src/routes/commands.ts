@@ -18,7 +18,9 @@ import {
 import type { SqlDriver, SqlParam, SqlStatement } from '../db/driver';
 import { CronValidationError, nextCronAfter, parseCron } from '../lib/cron';
 import { generateId } from '../lib/crypto';
+import { uniqueStrings } from '../lib/device-groups';
 import { reapTimedOutExecutions, writeAuditLog } from '../lib/reconcile';
+import { resolveEffectiveTimeZone } from '../lib/timezone';
 import {
   fail,
   getClientIp,
@@ -69,6 +71,51 @@ interface ExecutionResultJoinedRow {
   output: string | null;
   started_at: string | null;
   completed_at: string | null;
+}
+
+const VALID_COMMAND_TYPES = new Set<CommandType>(['immediate', 'once', 'cron']);
+
+function appendCommandTypeFilters(
+  where: string[],
+  params: SqlParam[],
+  typeFilter?: string,
+  excludeTypeFilter?: string,
+): void {
+  if (typeFilter) {
+    const valid = [
+      ...new Set(
+        typeFilter
+          .split(',')
+          .map((t) => t.trim())
+          .filter((t): t is CommandType => VALID_COMMAND_TYPES.has(t as CommandType)),
+      ),
+    ];
+    if (valid.length === 1) {
+      where.push('c.type = ?');
+      params.push(valid[0]!);
+    } else if (valid.length > 1) {
+      where.push(`c.type IN (${valid.map(() => '?').join(', ')})`);
+      params.push(...valid);
+    } else {
+      where.push('c.type = ?');
+      params.push(typeFilter);
+    }
+  }
+
+  if (excludeTypeFilter) {
+    const exValid = [
+      ...new Set(
+        excludeTypeFilter
+          .split(',')
+          .map((t) => t.trim())
+          .filter((t): t is CommandType => VALID_COMMAND_TYPES.has(t as CommandType)),
+      ),
+    ];
+    if (exValid.length > 0) {
+      where.push(`c.type NOT IN (${exValid.map(() => '?').join(', ')})`);
+      params.push(...exValid);
+    }
+  }
 }
 
 function toCommandDTO(row: CommandRow): CommandDTO {
@@ -234,13 +281,13 @@ export function createCommandRoutes(): Hono<AppEnv> {
         return fail(c, ErrorCode.FORBIDDEN, 'Forbidden for one or more target groups', 403);
       }
       const groupDevices = await driver.all<{ id: string; owner_id: number }>(
-        `SELECT id, owner_id FROM devices WHERE group_id IN (${placeholders})`,
-        targetIds,
+        `SELECT DISTINCT d.id, d.owner_id FROM devices d LEFT JOIN device_groups dg ON dg.device_id = d.id WHERE dg.group_id IN (${placeholders}) OR d.group_id IN (${placeholders})`,
+        [...targetIds, ...targetIds],
       );
       if (!isAdmin && groupDevices.some((d) => Number(d.owner_id) !== user.id)) {
         return fail(c, ErrorCode.FORBIDDEN, 'Forbidden for device in target group', 403);
       }
-      resolvedDeviceIds = groupDevices.map((d) => d.id);
+      resolvedDeviceIds = uniqueStrings(groupDevices.map((d) => d.id));
       if (type !== 'cron' && resolvedDeviceIds.length === 0) {
         return fail(c, ErrorCode.VALIDATION_ERROR, 'Target groups contain no devices', 400);
       }
@@ -259,7 +306,8 @@ export function createCommandRoutes(): Hono<AppEnv> {
       }
       try {
         const parsed = parseCron(scheduleStr);
-        nextRunAt = nextCronAfter(parsed, now);
+        const { timezone } = await resolveEffectiveTimeZone(driver, config);
+        nextRunAt = nextCronAfter(parsed, now, timezone);
       } catch (err) {
         const msg = err instanceof CronValidationError ? err.message : 'Invalid cron expression';
         return fail(c, ErrorCode.INVALID_CRON, msg, 400);
@@ -372,6 +420,7 @@ export function createCommandRoutes(): Hono<AppEnv> {
 
     const statusFilter = c.req.query('status')?.trim();
     const typeFilter = c.req.query('type')?.trim();
+    const excludeTypeFilter = c.req.query('exclude_type')?.trim();
     const deviceFilter = (c.req.query('device') || c.req.query('device_id'))?.trim();
     const ownerFilter = c.req.query('owner')?.trim();
 
@@ -390,15 +439,12 @@ export function createCommandRoutes(): Hono<AppEnv> {
       where.push('c.status = ?');
       params.push(statusFilter);
     }
-    if (typeFilter) {
-      where.push('c.type = ?');
-      params.push(typeFilter);
-    }
+    appendCommandTypeFilters(where, params, typeFilter, excludeTypeFilter);
     if (deviceFilter) {
       where.push(
-        "(EXISTS (SELECT 1 FROM execution_results er WHERE er.command_id = c.id AND er.device_id = ?) OR EXISTS (SELECT 1 FROM command_targets ct LEFT JOIN devices d ON d.id = ? WHERE ct.command_id = c.id AND ((ct.target_type = 'devices' AND ct.target_id = ?) OR (ct.target_type = 'groups' AND ct.target_id = d.group_id))))",
+        "(EXISTS (SELECT 1 FROM execution_results er WHERE er.command_id = c.id AND er.device_id = ?) OR EXISTS (SELECT 1 FROM command_targets ct WHERE ct.command_id = c.id AND ((ct.target_type = 'devices' AND ct.target_id = ?) OR (ct.target_type = 'groups' AND (EXISTS (SELECT 1 FROM device_groups dg WHERE dg.device_id = ? AND dg.group_id = ct.target_id) OR EXISTS (SELECT 1 FROM devices d WHERE d.id = ? AND d.group_id = ct.target_id))))))",
       );
-      params.push(deviceFilter, deviceFilter, deviceFilter);
+      params.push(deviceFilter, deviceFilter, deviceFilter, deviceFilter);
     }
 
     const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
@@ -494,7 +540,8 @@ export function createCommandRoutes(): Hono<AppEnv> {
       }
       let nextRun = row.next_run_at;
       if (row.type === 'cron' && (!nextRun || nextRun <= nowIso)) {
-        nextRun = nextCronAfter(row.schedule, now);
+        const { timezone } = await resolveEffectiveTimeZone(driver, c.get('config'));
+        nextRun = nextCronAfter(row.schedule, now, timezone);
       }
       await driver.run(
         "UPDATE commands SET status = 'pending', next_run_at = ?, updated_at = ? WHERE id = ?",

@@ -11,6 +11,15 @@ import {
   btn,
   diffPreHtml,
   hostCardHtml,
+  hEmp,
+  hInp,
+  hMs,
+  hMut,
+  hRb,
+  hRow,
+  hRw,
+  hStk,
+  hTag,
   isTerminalExecStatus,
   on,
   onAll,
@@ -25,7 +34,7 @@ import {
 import { icons } from '../icons';
 import type { RouteContext } from '../router';
 import { registerCleanup, toast } from '../state';
-import { computeDiffLines, esc, platformMeta, stripAnsi } from '../utils';
+import { computeDiffLines, deviceGroupIds, esc, platformMeta, stripAnsi } from '../utils';
 
 export async function renderConsole(ctx: RouteContext): Promise<void> {
   let devices: DeviceDTO[] = [];
@@ -75,7 +84,7 @@ export async function renderConsole(ctx: RouteContext): Promise<void> {
     const list = groups.filter((g) => selectedGroups.has(g.id));
     const memberIds = new Set<string>();
     for (const g of list) for (const id of g.device_ids ?? []) memberIds.add(id);
-    for (const d of devices) if (d.group_id && selectedGroups.has(d.group_id)) memberIds.add(d.id);
+    for (const d of devices) if (deviceGroupIds(d).some((gid) => selectedGroups.has(gid))) memberIds.add(d.id);
     const members = devices.filter((d) => memberIds.has(d.id));
     return {
       total: members.length || list.reduce((acc, g) => acc + (g.device_count || 0), 0),
@@ -91,13 +100,13 @@ export async function renderConsole(ctx: RouteContext): Promise<void> {
         const [k, l] = s.split(':');
         return `<button type="button" class="chip" data-pick="${k}">${l}</button>`;
       })
-      .join('')}</div><input id="con-search" class="input ism mb-2" type="search" placeholder="筛选目标…"><div id="con-target-list" class="target-list"></div></aside>` +
-    `<div class="c-mn smd"><section class="card"><form id="con-form" class="ssm"><div class="row gsm wrap"><input id="con-name" class="input ism flex-1" type="text" placeholder="任务名称 (可选)">${shellSelectHtml('con-shell', 'auto', 'input ism w-130')}<div class="row gxs"><label class="txs mut" for="con-timeout">超时(s)</label><input id="con-timeout" class="input ism w-70 mono" type="number" min="5" max="3600" value="60"></div></div>` +
-    `<div class="preset-bar"><span class="mut t2xs">预设:</span>${['uname -a', 'ubus call system board', 'df -h', 'uptime', 'ip addr']
+      .join('')}</div>${hInp('con-search', 'search', 'placeholder="筛选目标…"', 'input ism mb-2')}<div id="con-target-list" class="target-list"></div></aside>` +
+    `<div class="smd"><section class="card"><form id="con-form" class="ssm">${hRw(`${hInp('con-name', 'text', 'placeholder="任务名称 (可选)"', 'input ism flex-1')}${shellSelectHtml('con-shell', 'auto', 'input ism w-130')}${hRow(`<label class="txs mut" for="con-timeout">超时(s)</label>${hInp('con-timeout', 'number', 'min="5" max="3600" value="60"', 'input ism w-70 mono')}`)}`, 'gsm')}` +
+    `<div class="preset-bar">${hMs('预设:', 't2xs')}${['uname -a', 'ubus call system board', 'df -h', 'uptime', 'ip addr']
       .map((c) => `<button type="button" class="chip" data-con-preset="${esc(c)}">${esc(c === 'ubus call system board' ? 'ubus board' : c)}</button>`)
       .join('')}</div><textarea id="con-cmd" class="input mono t-ta" rows="3" placeholder="输入命令或脚本 (Ctrl/Cmd + Enter 执行)"></textarea>` +
-    `<div class="rb wrap gsm"><span class="mut txs">就绪</span><div class="row gsm">${btn(`${icons.stop()} 停止`, 'id="con-stop"', 'bsm be hidden')}<button type="submit" class="btn bsm bp" id="con-run">${icons.play()} 下发执行</button></div></div></form></section>` +
-    `<section class="card" id="con-results-card"><div class="emp-i mut">选择左侧主机或分组，输入命令下发即可实时查看输出。</div></section></div></div>`;
+    `${hRb(`${hMs('就绪')}${hRow(`${btn(`${icons.stop()} 停止`, 'id="con-stop"', 'bsm be hidden')}<button type="submit" class="btn bsm bp" id="con-run">${icons.play()} 下发执行</button>`, 'gsm')}`)}</form></section>` +
+    `<section class="card" id="con-results-card">${hEmp('选择左侧主机或分组，输入命令下发即可实时查看输出。')}</section></div></div>`;
 
   const paintTargetSidebar = () => {
     const counts = countOnlineSelected();
@@ -140,7 +149,7 @@ export async function renderConsole(ctx: RouteContext): Promise<void> {
             .map((g) => ({
               id: g.id,
               name: g.name,
-              right: `<span class="tag num">${esc(g.device_count)}</span>`,
+              right: hTag(esc(g.device_count), 'num'),
               sub: g.description || '暂无描述',
             }));
 
@@ -171,16 +180,17 @@ export async function renderConsole(ctx: RouteContext): Promise<void> {
     if (!activeCmdId) return;
 
     const dMap = devMap();
+    const isErr = (s: string) => s === 'failed' || s === 'timeout' || s === 'cancelled';
     const total = results.length;
     const doneOk = results.filter((r) => r.status === 'completed').length;
-    const doneErr = results.filter((r) => r.status === 'failed' || r.status === 'timeout' || r.status === 'cancelled').length;
+    const doneErr = results.filter((r) => isErr(r.status)).length;
     const active = results.filter((r) => r.status === 'queued' || r.status === 'running').length;
     const pct = total > 0 ? ((doneOk + doneErr) / total) * 100 : 0;
 
     const filteredResults = results.filter((r) => {
       if (resultFilter === 'active') return r.status === 'queued' || r.status === 'running';
       if (resultFilter === 'ok') return r.status === 'completed';
-      if (resultFilter === 'err') return r.status === 'failed' || r.status === 'timeout' || r.status === 'cancelled';
+      if (resultFilter === 'err') return isErr(r.status);
       return true;
     });
 
@@ -188,47 +198,65 @@ export async function renderConsole(ctx: RouteContext): Promise<void> {
     const baseName = baseRes ? baseRes.device_name || dMap.get(baseRes.device_id)?.name || baseRes.device_id : '';
 
     const listHtml = !filteredResults.length
-      ? `<div class="emp-i mut">${results.length === 0 ? '正在等待探针拉取执行…' : '当前筛选下无匹配结果。'}</div>`
+      ? hEmp(results.length === 0 ? '正在等待探针拉取执行…' : '当前筛选下无匹配结果。')
       : viewMode === 'cards'
-        ? `<div class="ssm">${filteredResults
-            .map((r) => {
-              const dev = dMap.get(r.device_id);
-              return hostCardHtml(r, {
-                hostLabel: r.device_name || dev?.name || r.device_id,
-                extraHtml: dev ? platformBadge(dev.platform, dev.arch) : '',
-                collapsible: true,
-                collapsed: collapsedCards.has(r.device_id),
-              });
-            })
-            .join('')}</div>`
-        : `<div class="ssm"><div class="mut txs">对比基准: <strong>${esc(baseName)}</strong></div>${filteredResults
-            .map((r) => {
-              const dev = dMap.get(r.device_id);
-              const isBase = Boolean(baseRes && r.device_id === baseRes.device_id);
-              const diff = computeDiffLines(baseRes?.output ?? '', r.output ?? '');
-              const badge = isBase
-                ? '<span class="tag">基准</span>'
-                : diff.identical
-                  ? '<span class="bdg bd-ok">一致</span>'
-                  : '<span class="bdg bd-wn">有差异</span>';
-              const customBodyHtml =
-                isBase || diff.identical
-                  ? preOutputHtml(r.output ?? '', '(无输出)')
-                  : diffPreHtml(baseRes?.output ?? '', r.output ?? '');
-              return hostCardHtml(r, { hostLabel: r.device_name || dev?.name || r.device_id, extraHtml: badge, customBodyHtml });
-            })
-            .join('')}</div>`;
+        ? hStk(
+            filteredResults
+              .map((r) => {
+                const dev = dMap.get(r.device_id);
+                return hostCardHtml(r, {
+                  hostLabel: r.device_name || dev?.name || r.device_id,
+                  extraHtml: dev ? platformBadge(dev.platform, dev.arch) : '',
+                  collapsible: true,
+                  collapsed: collapsedCards.has(r.device_id),
+                });
+              })
+              .join(''),
+            'ssm',
+          )
+        : hStk(
+            `<div class="mut txs">对比基准: <strong>${esc(baseName)}</strong></div>${filteredResults
+              .map((r) => {
+                const dev = dMap.get(r.device_id);
+                const isBase = Boolean(baseRes && r.device_id === baseRes.device_id);
+                const diff = computeDiffLines(baseRes?.output ?? '', r.output ?? '');
+                const badge = isBase
+                  ? hTag('基准')
+                  : diff.identical
+                    ? '<span class="bdg bd-ok">一致</span>'
+                    : '<span class="bdg bd-wn">有差异</span>';
+                const customBodyHtml =
+                  isBase || diff.identical
+                    ? preOutputHtml(r.output ?? '', '(无输出)')
+                    : diffPreHtml(baseRes?.output ?? '', r.output ?? '');
+                return hostCardHtml(r, { hostLabel: r.device_name || dev?.name || r.device_id, extraHtml: badge, customBodyHtml });
+              })
+              .join('')}`,
+            'ssm',
+          );
 
     card.innerHTML =
-      `<div class="ssm"><div class="rb wrap gsm"><div><div class="row gxs wrap"><strong>执行结果</strong><span class="tag mono">${esc(activeCmdId)}</span>${polling ? '<span class="bdg bd-wn"><span class="dot dot-pulse"></span>轮询中</span>' : ''}</div><div class="mut txs mono mt-1 truncate max-w-460">$ ${esc(activeCmdContent)}</div></div>${tabsHtml([['cards', '主机卡片'], ['diff', '输出 Diff']], viewMode, 'data-vmode', true)}</div>` +
-      `<div class="seg-bar"><div class="seg-ok" style="width:${total ? ((doneOk / total) * 100).toFixed(1) : 0}%"></div><div class="seg-warn" style="width:${total ? ((active / total) * 100).toFixed(1) : 0}%"></div><div class="seg-err" style="width:${total ? ((doneErr / total) * 100).toFixed(1) : 0}%"></div></div>` +
-      `<div class="rb wrap gsm"><div class="row gxs wrap">${[['all', `全部 (${total})`], ['active', `运行中 (${active})`], ['ok', `成功 (${doneOk})`], ['err', `异常 (${doneErr})`]]
-        .map(([k, l]) => `<button type="button" class="chip num${resultFilter === k ? ' active' : ''}" data-rfilter="${k}">${l}</button>`)
-        .join('')}</div><div class="row gxs"><span class="mut txs num">${Math.round(pct)}%</span>${
-        viewMode === 'cards' && results.length
-          ? btn('全部展开', 'id="con-expand-all"', 'b2x bg') + btn('全部折叠', 'id="con-collapse-all"', 'b2x bg')
-          : ''
-      }</div></div>${listHtml}</div>`;
+      hStk(
+        hRb(
+          `<div>${hRw(`<strong>执行结果</strong>${hTag(esc(activeCmdId), 'mono')}${polling ? '<span class="bdg bd-wn"><span class="dot dot-pulse"></span>轮询中</span>' : ''}`)}<div class="mut txs mono mt-1 truncate max-w-460">$ ${esc(activeCmdContent)}</div></div>${tabsHtml([['cards', '主机卡片'], ['diff', '输出 Diff']], viewMode, 'data-vmode', true)}`,
+        ) +
+          `<div class="seg-bar"><div class="seg-ok" style="width:${total ? ((doneOk / total) * 100).toFixed(1) : 0}%"></div><div class="seg-warn" style="width:${total ? ((active / total) * 100).toFixed(1) : 0}%"></div><div class="seg-err" style="width:${total ? ((doneErr / total) * 100).toFixed(1) : 0}%"></div></div>` +
+          hRb(
+            `${hRw(
+              [['all', `全部 (${total})`], ['active', `运行中 (${active})`], ['ok', `成功 (${doneOk})`], ['err', `异常 (${doneErr})`]]
+                .map(([k, l]) => `<button type="button" class="chip num${resultFilter === k ? ' active' : ''}" data-rfilter="${k}">${l}</button>`)
+                .join(''),
+            )}${hRow(
+              `${hMs(`${Math.round(pct)}%`, 'txs num')}${
+                viewMode === 'cards' && results.length
+                  ? btn('全部展开', 'id="con-expand-all"', 'b2x bg') + btn('全部折叠', 'id="con-collapse-all"', 'b2x bg')
+                  : ''
+              }`,
+            )}`,
+          ) +
+          listHtml,
+        'ssm',
+      );
 
     onAll(card, '[data-vmode]', (b) => {
       viewMode = b.dataset.vmode as 'cards' | 'diff';
@@ -289,6 +317,7 @@ export async function renderConsole(ctx: RouteContext): Promise<void> {
   });
 
   cmdTextarea.addEventListener('keydown', (ev) => {
+    if (ev.isComposing || ev.keyCode === 229) return;
     if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') {
       ev.preventDefault();
       form.requestSubmit();

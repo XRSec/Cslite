@@ -203,6 +203,13 @@ fetch_file() {
 		return $?
 	fi
 
+	ref_hdr=""
+	if [ -n "${SERVER_BASE:-}" ]; then
+		case "$src" in
+			"${SERVER_BASE}/"*) ref_hdr="${SERVER_BASE}/install" ;;
+		esac
+	fi
+
 	wget_timeout=""
 	if [ -n "$timeout_sec" ]; then
 		wget_timeout="$timeout_sec"
@@ -211,22 +218,25 @@ fetch_file() {
 
 	case "$tool" in
 		curl|/system/bin/curl)
-			if [ -n "$timeout_sec" ]; then
-				"$tool" -fsSL --connect-timeout 6 -m "$timeout_sec" -o "$dest" "$src"
-			else
-				"$tool" -fsSL -o "$dest" "$src"
-			fi
+			set -- -fsSL -A "CSLite-Installer/1.0"
+			[ -n "$ref_hdr" ] && set -- "$@" -H "Referer: $ref_hdr"
+			[ -n "$timeout_sec" ] && set -- "$@" --connect-timeout 6 -m "$timeout_sec"
+			"$tool" "$@" -o "$dest" "$src"
 			;;
 		wget|/system/bin/wget)
+			set -- -q
 			if [ -n "$wget_timeout" ]; then
 				flags_spec="$(probe_wget_timeout_flags "$tool")"
-				set -- -q
 				[ "${flags_spec%%:*}" = "1" ] && set -- "$@" -T "$wget_timeout"
 				[ "${flags_spec#*:}" = "1" ] && set -- "$@" -t 1
-				"$tool" "$@" -O "$dest" "$src"
-			else
-				"$tool" -q -O "$dest" "$src"
 			fi
+			case "$("$tool" --help </dev/null 2>&1 || true)" in
+				*--header*)
+					set -- "$@" --header="User-Agent: CSLite-Installer/1.0"
+					[ -n "$ref_hdr" ] && set -- "$@" --header="Referer: $ref_hdr"
+					;;
+			esac
+			"$tool" "$@" -O "$dest" "$src"
 			;;
 		busybox:*)
 			bb="${tool#busybox:}"

@@ -110,6 +110,37 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
+// RenderOpenRCInit produces a POSIX OpenRC /etc/init.d/cslite-agent script for Alpine/Gentoo Linux.
+func RenderOpenRCInit(binPath, configPath, logPath string) string {
+	if binPath == "" {
+		binPath = "/usr/local/bin/cslite-agent"
+	}
+	if configPath == "" {
+		configPath = "/etc/cslite-agent/config.json"
+	}
+	if logPath == "" {
+		logPath = "/var/log/cslite-agent.log"
+	}
+	cmdArgs := "run --config " + shellQuote(configPath)
+	return fmt.Sprintf(`#!/sbin/openrc-run
+# CSLite Agent OpenRC init script
+
+name="cslite-agent"
+description="CSLite Cross-Platform Agent"
+command=%s
+command_args=%s
+command_background="yes"
+pidfile="/run/cslite-agent.pid"
+output_log=%s
+error_log=%s
+
+depend() {
+	need net
+	after firewall
+}
+`, shellQuote(binPath), shellQuote(cmdArgs), shellQuote(logPath), shellQuote(logPath))
+}
+
 func systemdQuote(s string) string {
 	if !strings.ContainsAny(s, " \t\n\"\\") {
 		return s

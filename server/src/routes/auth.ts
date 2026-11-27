@@ -211,10 +211,34 @@ export function createAuthRoutes(): Hono<AppEnv> {
   router.get('/key', requireAuth, async (c) => {
     const driver = c.get('driver');
     const user = c.get('user');
-    const keys = await driver.all<ApiKeyDTO>(
-      'SELECT id, name, key_prefix, user_id, created_at, last_used FROM api_keys WHERE user_id = ? ORDER BY created_at DESC',
-      [user.id],
+    const isAdmin = user.role === UserRole.ADMIN;
+    const rows = await driver.all<{
+      id: string;
+      name: string;
+      key_prefix: string;
+      user_id: number;
+      owner_username: string | null;
+      device_id: string | null;
+      device_name: string | null;
+      created_at: string;
+      last_used: string | null;
+    }>(
+      isAdmin
+        ? 'SELECT ak.id, ak.name, ak.key_prefix, ak.user_id, u.username AS owner_username, ak.device_id, d.name AS device_name, ak.created_at, ak.last_used FROM api_keys ak LEFT JOIN users u ON u.id = ak.user_id LEFT JOIN devices d ON d.id = ak.device_id ORDER BY ak.created_at DESC'
+        : 'SELECT ak.id, ak.name, ak.key_prefix, ak.user_id, u.username AS owner_username, ak.device_id, d.name AS device_name, ak.created_at, ak.last_used FROM api_keys ak LEFT JOIN users u ON u.id = ak.user_id LEFT JOIN devices d ON d.id = ak.device_id WHERE ak.user_id = ? ORDER BY ak.created_at DESC',
+      isAdmin ? [] : [user.id],
     );
+    const keys: ApiKeyDTO[] = rows.map((k) => ({
+      id: k.id,
+      name: k.name,
+      key_prefix: k.key_prefix,
+      user_id: Number(k.user_id),
+      owner_username: k.owner_username ?? undefined,
+      device_id: k.device_id ?? null,
+      device_name: k.device_name ?? undefined,
+      created_at: k.created_at,
+      last_used: k.last_used ?? null,
+    }));
     return ok(c, { total: keys.length, keys });
   });
 
@@ -235,7 +259,7 @@ export function createAuthRoutes(): Hono<AppEnv> {
     const nowIso = new Date().toISOString();
 
     await driver.run(
-      'INSERT INTO api_keys (id, user_id, name, key_hash, key_prefix, last_used, created_at) VALUES (?, ?, ?, ?, ?, NULL, ?)',
+      'INSERT INTO api_keys (id, user_id, name, key_hash, key_prefix, device_id, key_secret, last_used, created_at) VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, ?)',
       [id, user.id, name, keyHash, keyPrefix, nowIso],
     );
 
@@ -403,22 +427,39 @@ export function createAuthRoutes(): Hono<AppEnv> {
     }
     const targetId = Number.parseInt(rawId, 10);
     const actor = c.get('user');
-    if (targetId === actor.id) {
-      return fail(c, ErrorCode.CONFLICT, 'Cannot delete yourself', 409);
-    }
 
     const driver = c.get('driver');
-    const existing = await driver.get<{ id: number; username: string }>(
-      'SELECT id, username FROM users WHERE id = ? LIMIT 1',
+    const existing = await driver.get<{ id: number; username: string; role: number }>(
+      'SELECT id, username, role FROM users WHERE id = ? LIMIT 1',
       [targetId],
     );
     if (!existing) {
       return fail(c, ErrorCode.NOT_FOUND, 'User not found', 404);
     }
 
+    const isAdminTarget = Number(existing.role) === UserRole.ADMIN;
+    if (isAdminTarget) {
+      const adminCountRow = await driver.get<{ total: number }>(
+        'SELECT COUNT(*) AS total FROM users WHERE role = 1',
+      );
+      if (Number(adminCountRow?.total ?? 0) <= 1) {
+        return fail(c, ErrorCode.CONFLICT, 'Cannot delete the last admin', 409);
+      }
+    }
+    if (targetId === actor.id) {
+      return fail(c, ErrorCode.CONFLICT, 'Cannot delete yourself', 409);
+    }
+
+    // Preserve admin probe API keys by transferring to the acting admin; revoke non-admin personal keys.
     await driver.batch([
+      isAdminTarget
+        ? { sql: 'UPDATE api_keys SET user_id = ? WHERE user_id = ?', params: [actor.id, targetId] }
+        : { sql: 'DELETE FROM api_keys WHERE user_id = ?', params: [targetId] },
+      { sql: 'UPDATE devices SET owner_id = ? WHERE owner_id = ?', params: [actor.id, targetId] },
+      { sql: 'UPDATE agents SET owner_id = ? WHERE owner_id = ?', params: [actor.id, targetId] },
+      { sql: 'UPDATE `groups` SET created_by = ? WHERE created_by = ?', params: [actor.id, targetId] },
+      { sql: 'UPDATE commands SET created_by = ? WHERE created_by = ?', params: [actor.id, targetId] },
       { sql: 'DELETE FROM sessions WHERE user_id = ?', params: [targetId] },
-      { sql: 'DELETE FROM api_keys WHERE user_id = ?', params: [targetId] },
       { sql: 'DELETE FROM users WHERE id = ?', params: [targetId] },
     ]);
 

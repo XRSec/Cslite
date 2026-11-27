@@ -2,7 +2,7 @@
 # Zero external dependencies; implements /api/agent/* protocol with UTF-8 output and atomic state.
 
 $ErrorActionPreference = "Stop"
-$Version = "v1.0.0"
+$Version = "v1.2.0"
 
 try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls
@@ -282,6 +282,16 @@ function Get-HostMetrics {
         $script:HasPrevNet = $true
     } catch {}
 
+    $ipList = @()
+    try {
+        if (Get-Command Get-NetIPAddress -ErrorAction SilentlyContinue) {
+            $ipList = @(Get-NetIPAddress -ErrorAction SilentlyContinue | Where-Object {
+                $_.IPAddress -and
+                $_.IPAddress -notmatch '^(127\.|169\.254\.|0\.0\.0\.0$|::1$|::$|fe80:|ff)'
+            } | Select-Object -ExpandProperty IPAddress -Unique | Select-Object -First 128)
+        }
+    } catch {}
+
     return [ordered]@{
         cpu_usage      = $cpuPct
         memory_used    = $memUsed
@@ -292,6 +302,7 @@ function Get-HostMetrics {
         network_in     = $netIn
         network_out    = $netOut
         uptime         = $uptime
+        ip_addresses   = $ipList
     }
 }
 
@@ -301,14 +312,23 @@ function Invoke-CsliteApi {
         [string]$BaseUrl,
         [string]$Path,
         [string]$ApiKey,
-        [object]$BodyObj = $null
+        [object]$BodyObj = $null,
+        [string]$UserAgent = "",
+        [string]$Referer = ""
     )
     $url = "$BaseUrl$Path"
+    $baseRoot = $BaseUrl -replace '/api$', ''
+    $effUa = if (-not [string]::IsNullOrWhiteSpace($UserAgent)) { $UserAgent.Trim() } else { "CSLite-Agent/ps-$Version" }
+    $effRef = if (-not [string]::IsNullOrWhiteSpace($Referer)) { $Referer.Trim() } elseif (-not [string]::IsNullOrWhiteSpace($baseRoot)) { "$baseRoot/agent/telemetry" } else { "" }
+
     $req = [System.Net.HttpWebRequest]::Create($url)
     $req.Method = $Method
     $req.Timeout = 30000
     $req.ReadWriteTimeout = 30000
-    $req.UserAgent = "cslite-agent-lite/$Version"
+    $req.UserAgent = $effUa
+    if (-not [string]::IsNullOrWhiteSpace($effRef)) {
+        $req.Referer = $effRef
+    }
     $req.Accept = "application/json"
     $req.Headers.Add("X-API-Key", $ApiKey)
 
@@ -378,6 +398,8 @@ function Load-Config {
         APIKey            = ""
         Name              = ""
         DeviceID          = ""
+        UserAgent         = ""
+        Referer           = ""
         PollInterval      = 5
         HeartbeatInterval = 60
         ExplicitPoll      = $false
@@ -395,6 +417,8 @@ function Load-Config {
                 if ($fc.api_key) { $cfg.APIKey = ([string]$fc.api_key).Trim() }
                 if ($fc.name) { $cfg.Name = ([string]$fc.name).Trim() }
                 if ($fc.device_id) { $cfg.DeviceID = ([string]$fc.device_id).Trim() }
+                if ($fc.user_agent) { $cfg.UserAgent = ([string]$fc.user_agent).Trim() }
+                if ($fc.referer) { $cfg.Referer = ([string]$fc.referer).Trim() }
                 if ($fc.poll_interval -and [int]$fc.poll_interval -gt 0) {
                     $cfg.PollInterval = [int]$fc.poll_interval
                     if ($cfg.PollInterval -ne 5) { $cfg.ExplicitPoll = $true }
@@ -424,6 +448,9 @@ function Load-Config {
     if (-not [string]::IsNullOrWhiteSpace($env:CSLITE_DEVICE_ID)) { $cfg.DeviceID = $env:CSLITE_DEVICE_ID.Trim() }
     elseif ([string]::IsNullOrWhiteSpace($cfg.DeviceID) -and -not [string]::IsNullOrWhiteSpace($env:AGENT_DEVICE_ID)) { $cfg.DeviceID = $env:AGENT_DEVICE_ID.Trim() }
 
+    if (-not [string]::IsNullOrWhiteSpace($env:CSLITE_USER_AGENT)) { $cfg.UserAgent = $env:CSLITE_USER_AGENT.Trim() }
+    if (-not [string]::IsNullOrWhiteSpace($env:CSLITE_REFERER)) { $cfg.Referer = $env:CSLITE_REFERER.Trim() }
+
     $tmpInt = 0
     if (-not [string]::IsNullOrWhiteSpace($env:CSLITE_POLL_INTERVAL) -and [int]::TryParse($env:CSLITE_POLL_INTERVAL, [ref]$tmpInt) -and $tmpInt -gt 0) {
         $cfg.PollInterval = $tmpInt
@@ -445,6 +472,8 @@ function Load-Config {
     if (-not [string]::IsNullOrWhiteSpace($Cli.APIKey)) { $cfg.APIKey = $Cli.APIKey.Trim() }
     if (-not [string]::IsNullOrWhiteSpace($Cli.Name)) { $cfg.Name = $Cli.Name.Trim() }
     if (-not [string]::IsNullOrWhiteSpace($Cli.DeviceID)) { $cfg.DeviceID = $Cli.DeviceID.Trim() }
+    if (-not [string]::IsNullOrWhiteSpace($Cli.UserAgent)) { $cfg.UserAgent = $Cli.UserAgent.Trim() }
+    if (-not [string]::IsNullOrWhiteSpace($Cli.Referer)) { $cfg.Referer = $Cli.Referer.Trim() }
     if ($Cli.PollInterval -gt 0) { $cfg.PollInterval = $Cli.PollInterval; $cfg.ExplicitPoll = $true }
     if ($Cli.HeartbeatInterval -gt 0) { $cfg.HeartbeatInterval = $Cli.HeartbeatInterval; $cfg.ExplicitHeartbeat = $true }
     if (-not [string]::IsNullOrWhiteSpace($Cli.LogLevel)) { $cfg.LogLevel = $Cli.LogLevel.Trim().ToLower() }
@@ -465,6 +494,8 @@ function Save-Config {
         heartbeat_interval = $Cfg.HeartbeatInterval
         log_level          = $Cfg.LogLevel
     }
+    if (-not [string]::IsNullOrWhiteSpace($Cfg.UserAgent)) { $obj["user_agent"] = $Cfg.UserAgent }
+    if (-not [string]::IsNullOrWhiteSpace($Cfg.Referer)) { $obj["referer"] = $Cfg.Referer }
     Write-Utf8Atomic -Path $Cfg.Paths.ConfigFile -Content (($obj | ConvertTo-Json -Depth 4) + "`n")
 }
 
@@ -534,7 +565,7 @@ function Register-Agent {
         $body["device_id"] = $Cfg.DeviceID
     }
 
-    $res = Invoke-CsliteApi -Method "POST" -BaseUrl $BaseUrl -Path "/agent/register" -ApiKey $Cfg.APIKey -BodyObj $body
+    $res = Invoke-CsliteApi -Method "POST" -BaseUrl $BaseUrl -Path "/agent/register" -ApiKey $Cfg.APIKey -BodyObj $body -UserAgent $Cfg.UserAgent -Referer $Cfg.Referer
     if ($null -eq $res.Json -or $res.Json.code -ne 20000) {
         $msg = if ($res.Json -and $res.Json.message) { $res.Json.message } else { $res.Raw }
         $code = if ($res.Json) { $res.Json.code } else { $res.StatusCode }
@@ -577,7 +608,7 @@ function Send-Heartbeat {
         timestamp  = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
     }
 
-    $res = Invoke-CsliteApi -Method "POST" -BaseUrl $BaseUrl -Path "/agent/heartbeat" -ApiKey $Cfg.APIKey -BodyObj $body
+    $res = Invoke-CsliteApi -Method "POST" -BaseUrl $BaseUrl -Path "/agent/heartbeat" -ApiKey $Cfg.APIKey -BodyObj $body -UserAgent $Cfg.UserAgent -Referer $Cfg.Referer
     if ($res.StatusCode -eq 404 -or ($res.Json -and $res.Json.code -eq 40010)) {
         Write-Log -Level "WARN" -Message "heartbeat returned 40010 (DEVICE_NOT_FOUND); re-registering" -MinLevel $Cfg.LogLevel
         Remove-Item -LiteralPath $Cfg.Paths.StateFile -Force -ErrorAction SilentlyContinue
@@ -586,7 +617,7 @@ function Send-Heartbeat {
         $State.DeviceID = $newState.DeviceID
         $body["agent_id"] = $State.AgentID
         $body["device_id"] = $State.DeviceID
-        $res = Invoke-CsliteApi -Method "POST" -BaseUrl $BaseUrl -Path "/agent/heartbeat" -ApiKey $Cfg.APIKey -BodyObj $body
+        $res = Invoke-CsliteApi -Method "POST" -BaseUrl $BaseUrl -Path "/agent/heartbeat" -ApiKey $Cfg.APIKey -BodyObj $body -UserAgent $Cfg.UserAgent -Referer $Cfg.Referer
     }
 
     if ($null -eq $res.Json -or $res.Json.code -ne 20000) {
@@ -726,7 +757,7 @@ function Invoke-TaskAndReport {
 
     foreach ($delay in @(1, 2, 4)) {
         try {
-            $rep = Invoke-CsliteApi -Method "POST" -BaseUrl $BaseUrl -Path "/agent/result" -ApiKey $Cfg.APIKey -BodyObj $payload
+            $rep = Invoke-CsliteApi -Method "POST" -BaseUrl $BaseUrl -Path "/agent/result" -ApiKey $Cfg.APIKey -BodyObj $payload -UserAgent $Cfg.UserAgent -Referer $Cfg.Referer
             if ($rep.Json -and $rep.Json.code -eq 20000) {
                 Write-Log -Level "INFO" -Message "reported execution_id=$execId status=$status exit_code=$exitCode" -MinLevel $Cfg.LogLevel
                 return
@@ -759,7 +790,7 @@ function Poll-Once {
         $body["timestamp"] = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
     }
 
-    $res = Invoke-CsliteApi -Method "POST" -BaseUrl $BaseUrl -Path "/agent/commands" -ApiKey $Cfg.APIKey -BodyObj $body
+    $res = Invoke-CsliteApi -Method "POST" -BaseUrl $BaseUrl -Path "/agent/commands" -ApiKey $Cfg.APIKey -BodyObj $body -UserAgent $Cfg.UserAgent -Referer $Cfg.Referer
     if ($res.StatusCode -eq 404 -or ($res.Json -and $res.Json.code -eq 40010)) {
         Write-Log -Level "WARN" -Message "poll returned 40010; re-registering" -MinLevel $Cfg.LogLevel
         Remove-Item -LiteralPath $Cfg.Paths.StateFile -Force -ErrorAction SilentlyContinue
@@ -767,7 +798,7 @@ function Poll-Once {
         $State.AgentID = $newState.AgentID
         $State.DeviceID = $newState.DeviceID
         $body["agent_id"] = $State.AgentID
-        $res = Invoke-CsliteApi -Method "POST" -BaseUrl $BaseUrl -Path "/agent/commands" -ApiKey $Cfg.APIKey -BodyObj $body
+        $res = Invoke-CsliteApi -Method "POST" -BaseUrl $BaseUrl -Path "/agent/commands" -ApiKey $Cfg.APIKey -BodyObj $body -UserAgent $Cfg.UserAgent -Referer $Cfg.Referer
     }
 
     if ($null -eq $res.Json -or $res.Json.code -ne 20000) {
@@ -799,6 +830,8 @@ function Parse-CliArgs {
         APIKey            = ""
         Name              = ""
         DeviceID          = ""
+        UserAgent         = ""
+        Referer           = ""
         ConfigFile        = ""
         PollInterval      = 0
         HeartbeatInterval = 0
@@ -842,6 +875,10 @@ function Parse-CliArgs {
             "-name" { $cli.Name = $val; $i += 2; continue }
             "--device-id" { $cli.DeviceID = $val; $i += 2; continue }
             "-device-id" { $cli.DeviceID = $val; $i += 2; continue }
+            "--user-agent" { $cli.UserAgent = $val; $i += 2; continue }
+            "-user-agent" { $cli.UserAgent = $val; $i += 2; continue }
+            "--referer" { $cli.Referer = $val; $i += 2; continue }
+            "-referer" { $cli.Referer = $val; $i += 2; continue }
             "--config" { $cli.ConfigFile = $val; $i += 2; continue }
             "-config" { $cli.ConfigFile = $val; $i += 2; continue }
             "--poll" { [void][int]::TryParse($val, [ref]$cli.PollInterval); $i += 2; continue }

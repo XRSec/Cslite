@@ -1,4 +1,5 @@
 const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 
 export const PBKDF2_ITERATIONS = 100_000;
 const PBKDF2_HASH_BYTES = 32;
@@ -55,6 +56,73 @@ export function generateSessionToken(): string {
 
 export function generateApiKey(): string {
   return `ak_live_${randomHex(20)}`;
+}
+
+export function generateDeviceApiKey(): string {
+  return `ak_dev_${randomHex(20)}`;
+}
+
+async function deriveAesGcmKey(secret: string, usage: 'encrypt' | 'decrypt') {
+  const keyHash = await crypto.subtle.digest('SHA-256', encoder.encode(secret));
+  return crypto.subtle.importKey('raw', keyHash, 'AES-GCM', false, [usage]);
+}
+
+/**
+ * Seals a device-bound API key for reversible server-side lookup via AES-256-GCM
+ * when an encryption secret is configured, or falls back to tagged plaintext.
+ */
+export async function sealApiKeySecret(rawKey: string, secret?: string): Promise<string> {
+  const trimmedSecret = secret?.trim();
+  if (!trimmedSecret) {
+    return `plain:${rawKey}`;
+  }
+  const aesKey = await deriveAesGcmKey(trimmedSecret, 'encrypt');
+  const iv = new Uint8Array(12);
+  crypto.getRandomValues(iv);
+  const cipherBuf = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    aesKey,
+    encoder.encode(rawKey),
+  );
+  return `enc1:${toHex(iv)}:${toHex(new Uint8Array(cipherBuf))}`;
+}
+
+/**
+ * Unseals a stored device-bound API key secret; returns null if missing or invalid.
+ */
+export async function unsealApiKeySecret(
+  stored: string | null | undefined,
+  secret?: string,
+): Promise<string | null> {
+  if (!stored) return null;
+  if (stored.startsWith('plain:')) {
+    const raw = stored.slice('plain:'.length);
+    return raw ? raw : null;
+  }
+  if (stored.startsWith('enc1:')) {
+    const trimmedSecret = secret?.trim();
+    if (!trimmedSecret) return null;
+    const parts = stored.split(':');
+    if (parts.length !== 3) return null;
+    const iv = fromHex(parts[1] ?? '');
+    const cipher = fromHex(parts[2] ?? '');
+    if (!iv || iv.byteLength !== 12 || !cipher || cipher.byteLength === 0) {
+      return null;
+    }
+    try {
+      const aesKey = await deriveAesGcmKey(trimmedSecret, 'decrypt');
+      const plainBuf = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: new Uint8Array(iv) },
+        aesKey,
+        new Uint8Array(cipher),
+      );
+      const plain = decoder.decode(plainBuf);
+      return plain ? plain : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
 export async function sha256Hex(input: string): Promise<string> {

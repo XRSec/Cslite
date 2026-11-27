@@ -14,6 +14,9 @@
 | `CSLITE_DB_DRIVER`       | `sqlite`             | 数据库驱动：`sqlite`、`mysql` 或 `turso`（Node / SCF 生效）          |
 | `CSLITE_DB_PATH`         | `./data/cslite.db`   | SQLite 数据库文件路径（SCF 未配置外部库时回退为 `/tmp/cslite.db`）  |
 | `CSLITE_DB_DSN`          | -                    | MySQL 连接 URI（如 `mysql://user:pass@127.0.0.1:3306/cslite`）       |
+| `MYSQL_HOST` / `MYSQL_PORT` | `3306`            | 分项 MySQL 主机与端口（未配置 `CSLITE_DB_DSN` 时生效）               |
+| `MYSQL_USER` / `MYSQL_PASSWORD` / `MYSQL_DATABASE` | - | 分项 MySQL 凭据与库名（设置 `MYSQL_HOST` 与 `MYSQL_DATABASE` 时 `MYSQL_USER` 必填） |
+| `MYSQL_SSL`              | `false`              | 设为 `true` 时为 `mysql2` 连接池启用 TLS 加密连接                    |
 | `CSLITE_MYSQL_POOL_SIZE` | `3`                  | MySQL 连接池最大连接数                                               |
 | `TURSO_DATABASE_URL`     | -                    | Turso / libSQL HTTP 地址（支持 `libsql://` 或 `https://`，全运行时通用） |
 | `TURSO_AUTH_TOKEN`       | -                    | Turso 访问令牌（托管 Turso 必填）                                    |
@@ -28,6 +31,9 @@
 | `PORT`            | -       | 通用平台端口环境变量（次优先级）                                   |
 | `CSLITE_PORT`     | `9000`  | Node / Docker HTTP 服务监听端口                                    |
 | `CSLITE_VERSION`  | `4.0.0` | `/api/system/info` 返回的服务端版本号                              |
+| `PUBLIC_BASE_URL` | -       | 外部访问基址（兼容别名 `CSLITE_PUBLIC_BASE_URL`），供 CDN/反代场景下脚本注入与 CSRF 校验使用 |
+| `CSLITE_TIMEZONE` | -       | 默认展示与健康统计时区（IANA 名称，如 `Asia/Shanghai`；未设时回退 `TZ`） |
+| `CSLITE_LOG_RETENTION_DAYS` | `30` | 日志保留天数上限（`0` 表示禁用自动清理；可在面板设置页动态覆盖）   |
 
 ### 认证、会话与安全
 
@@ -35,6 +41,9 @@
 | --------------------------- | -------- | -------------------------------------------------------------------- |
 | `CSLITE_ADMIN_USERNAME`     | `admin`  | 首次迁移初始化的管理员用户名                                         |
 | `CSLITE_ADMIN_PASSWORD`     | `admin`  | 首次迁移初始化的管理员密码（生产环境务必修改）                       |
+| `CSLITE_ENCRYPTION_KEY`     | -        | 单机绑定密钥加密主密钥（兼容别名 `CSLITE_SECRET`），用于 AES-GCM 密封 `key_secret` |
+| `CSLITE_ORIGIN_SECRET`      | -        | CDN / 反代回源鉴权密钥；启用后未携带匹配请求头的直连请求直接返回 `403` |
+| `CSLITE_ORIGIN_SECRET_HEADER` | `x-cslite-origin-secret` | 回源鉴权检查的 HTTP 请求头名称（大小写不敏感）             |
 | `CSLITE_SESSION_TTL`        | `604800` | 会话有效期（秒，默认 7 天）                                          |
 | `CSLITE_COOKIE_SECURE`      | 自动检测 | `true` / `false`；未设置时依据 `X-Forwarded-Proto` 或 URL 协议自动判断 |
 | `CSLITE_ALLOW_REGISTRATION` | `true`   | 是否允许 `/api/agent/register` 注册新设备（`true`/`1`/`yes` vs `false`/`0`/`no`） |

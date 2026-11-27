@@ -31,4 +31,4 @@ Cslite 服务端基于 **TypeScript + Hono** 构建，采用完全无状态的 W
 2. **定时任务（future `once` 与 5 字段 UTC `cron`）**：创建时计算 `next_run_at`。当目标 Agent 轮询 `/api/agent/commands` 时，服务端惰性触发到期任务，并借助 `executions(command_id, scheduled_for)` 唯一约束防止并发重复实例化。
 3. **原子抢占与超时回收**：Agent 拉取命令时通过 `UPDATE execution_results SET status = 'running' ... WHERE id = ? AND status = 'queued'` 原子认领任务；超时任务在查询详情或下次轮询时惰性标记为 `timeout`，并实时收敛父 `executions` 与非周期 `commands` 状态（`cron` 命令永不置为 `completed`）。
 
-详细架构约束与阅读入口请参见：[`docs/README.md`](../README.md) 与 [`docs/deploy.md`](../deploy.md)。
+详细架构约束与阅读入口请参见：[`docs/README.md`](../README.md)（[中文版](../README.zh-CN.md)）与 [`docs/deploy.md`](../deploy.md)。

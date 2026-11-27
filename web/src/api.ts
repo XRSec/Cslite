@@ -19,18 +19,27 @@ import {
   type CreateGroupRequest,
   type CreateUserRequest,
   type DeviceDTO,
+  type DeviceDeployKeyRequest,
+  type DeviceDeployKeyResponse,
   type DeviceListResponse,
   type DeviceLogDTO,
   type DeviceStatusResponse,
   type GroupDTO,
   type GroupDevicesRequest,
+  type HealthHistoryRange,
+  type HealthHistoryResponse,
   type LogListResponse,
   type LoginRequest,
   type LoginResponse,
+  type SystemCleanupRequest,
+  type SystemCleanupResponse,
   type SystemInfoDTO,
   type UpdateCommandStatusRequest,
   type UpdateDeviceRequest,
   type UpdateGroupRequest,
+  type UpdateSystemSettingsRequest,
+  type UpgradeDeviceRequest,
+  type UpgradeDeviceResponse,
   type UserDTO,
   type UserListResponse,
 } from '../../shared/types';
@@ -122,11 +131,17 @@ export const api = {
   deleteUser: (id: number) => del<void>(`/api/auth/user/${enc(String(id))}`),
 
   createDevice: (b: CreateDeviceRequest) => post<CreateDeviceResponse>('/api/devices', b),
+  getDeviceDeployKey: (id: string, b: DeviceDeployKeyRequest = {}) =>
+    post<DeviceDeployKeyResponse>(`/api/devices/${enc(id)}/deploy-key`, b),
   listDevices: (p?: { status?: string; platform?: string; group?: string; search?: string; page?: number; per_page?: number }) =>
     get<DeviceListResponse>('/api/devices', p),
   getDevice: (id: string) => get<DeviceDTO>(`/api/devices/${enc(id)}`),
   updateDevice: (id: string, b: UpdateDeviceRequest) => req<DeviceDTO>(`/api/devices/${enc(id)}`, 'PATCH', b),
   getDeviceStatus: (id: string) => get<DeviceStatusResponse>('/api/devices/status', { id }),
+  getHealthHistory: (p?: { range?: HealthHistoryRange; device_id?: string; tz?: string }) =>
+    get<HealthHistoryResponse>('/api/devices/health-history', p),
+  upgradeDevice: (id: string, b: UpgradeDeviceRequest = {}) =>
+    post<UpgradeDeviceResponse>(`/api/devices/${enc(id)}/upgrade`, b),
   deleteDevice: (id: string) => del<void>(`/api/devices/${enc(id)}`),
   batchDeleteDevices: (ids: string[]) => post<{ deleted_count?: number }>('/api/devices/batch-delete', { ids } satisfies BatchDeleteDevicesRequest),
 
@@ -154,20 +169,22 @@ export const api = {
       timeout: opts.timeout,
       shell: opts.shell && opts.shell !== 'auto' ? opts.shell : undefined,
     } satisfies CreateCommandRequest),
-  listCommands: (p?: { status?: string; type?: string; device?: string; page?: number; per_page?: number }) =>
+  listCommands: (p?: { status?: string; type?: string; exclude_type?: string; device?: string; page?: number; per_page?: number }) =>
     get<CommandListResponse>('/api/commands', p),
   getCommand: (id: string) => get<CommandDetailDTO>(`/api/commands/${enc(id)}`),
   updateCommandStatus: (id: string, action: CommandAction) => put<void>(`/api/commands/${enc(id)}`, { action } satisfies UpdateCommandStatusRequest),
   getCommandResults: (id: string, p?: { page?: number; per_page?: number }) => get<CommandResultsResponse>(`/api/commands/${enc(id)}/results`, p),
 
-  listCommandLogs: (p?: { device_id?: string; command_id?: string; status?: string; page?: number; per_page?: number }) =>
+  listCommandLogs: (p?: { device_id?: string; command_id?: string; status?: string; type?: string; source?: string; page?: number; per_page?: number }) =>
     get<LogListResponse<CommandLogDTO>>('/api/logs/command', p),
-  listDeviceLogs: (p?: { device_id?: string; type?: string; page?: number; per_page?: number }) =>
+  listDeviceLogs: (p?: { device_id?: string; type?: string; exclude_type?: string; page?: number; per_page?: number }) =>
     get<LogListResponse<DeviceLogDTO>>('/api/logs/device', p),
   listAuditLogs: (p?: { user_id?: number; action?: string; page?: number; per_page?: number }) =>
     get<LogListResponse<AuditLogDTO>>('/api/logs/user', p),
 
   getSystemInfo: () => get<SystemInfoDTO>('/api/system/info'),
+  updateSystemSettings: (b: UpdateSystemSettingsRequest) => put<SystemInfoDTO>('/api/system/settings', b),
+  runSystemCleanup: (b: SystemCleanupRequest = {}) => post<SystemCleanupResponse>('/api/system/cleanup', b),
   getHealth: () => get<unknown>('/health', undefined, true),
   async fetchFleet(): Promise<{ devices: DeviceDTO[]; groups: GroupDTO[]; total: number }> {
     const [devRes, groups] = await Promise.all([

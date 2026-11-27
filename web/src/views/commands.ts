@@ -7,14 +7,24 @@ import type {
   TargetType,
 } from '../../../shared/types';
 import { api, ApiError } from '../api';
-import { statusBadge } from '../components/badges';
+import { commandSourceBadge, statusBadge } from '../components/badges';
 import {
+  bindChange,
   bindCopyButtons,
   bindSearchInput,
   btn,
   fieldHtml,
   formModal,
   hostCardHtml,
+  hInp,
+  hMs,
+  hMut,
+  hRb,
+  hRow,
+  hRw,
+  hStk,
+  hThTr,
+  hTr,
   infoGridHtml,
   on,
   onAll,
@@ -28,7 +38,7 @@ import {
 } from '../components/ui';
 import { icons } from '../icons';
 import type { RouteContext } from '../router';
-import { openModal, toast } from '../state';
+import { openModal, state, toast } from '../state';
 import { cronLabel, esc, formatDate, formatElapsed, formatRelativeZh } from '../utils';
 
 const CRON_PRESETS = [
@@ -50,7 +60,7 @@ export async function renderCommands(ctx: RouteContext): Promise<void> {
   const load = async () => {
     try {
       const [cmdRes, fleet] = await Promise.all([
-        api.listCommands({ status: statusFilter || undefined, type: typeFilter || undefined, per_page: 100 }),
+        api.listCommands({ status: statusFilter || undefined, type: typeFilter || 'cron,once', per_page: 100 }),
         api.fetchFleet().catch(() => ({ devices: [] as DeviceDTO[], groups: [] as GroupDTO[] })),
       ]);
       if (ctx.isStale()) return;
@@ -66,12 +76,14 @@ export async function renderCommands(ctx: RouteContext): Promise<void> {
   const paint = () => {
     const q = search.trim().toLowerCase();
     const filtered = commands.filter((c) => {
+      if (c.type !== 'cron' && c.type !== 'once') return false;
       if (statusFilter && c.status !== statusFilter) return false;
       if (typeFilter && c.type !== typeFilter) return false;
       if (q && !`${c.name} ${c.id} ${c.content ?? ''}`.toLowerCase().includes(q)) return false;
       return true;
     });
 
+    const cmdLabels = ['任务', '类型', '调度', '状态', '下次执行', '创建时间', ''];
     const rowsHtml = filtered
       .map((c) => {
         const canPause = c.status === 'pending' || c.status === 'running';
@@ -79,31 +91,46 @@ export async function renderCommands(ctx: RouteContext): Promise<void> {
         const canCancel = canPause || canResume;
         const schedHtml =
           c.type === 'cron'
-            ? `<div>${esc(cronLabel(c.schedule))}</div><div class="mono mut t2xs">${esc(c.schedule)}</div>`
-            : `<span class="mono mut">${esc(c.schedule || '—')}</span>`;
+            ? hStk(`<div>${esc(cronLabel(c.schedule))}</div>${hMut(esc(c.schedule), 'mono t2xs')}`, 'sxs')
+            : `<span class="mono mut">${esc(c.schedule ? formatDate(c.schedule) : '立即一次性')}</span>`;
 
-        return `<tr><td><strong>${esc(c.name)}</strong><div class="mut t2xs mono">${esc(c.id)}</div></td><td><span class="tag">${esc(c.type)}</span></td><td class="txs">${schedHtml}</td><td>${statusBadge(c.status)}</td><td class="txs mut">${c.next_run ? esc(formatRelativeZh(c.next_run)) : '—'}</td><td class="txs mut" title="${esc(c.created_at)}">${esc(formatRelativeZh(c.created_at))}</td><td class="tr"><div class="re gxs">${btn(`${icons.eye()} 详情`, `data-inspect="${esc(c.id)}"`, 'bxs ba')}${
-          canPause ? btn(icons.pause(), `data-act="pause" data-cid="${esc(c.id)}" title="暂停"`, 'bxs bg') : ''
-        }${canResume ? btn(icons.play(), `data-act="resume" data-cid="${esc(c.id)}" title="恢复"`, 'bxs bg tok') : ''}${
-          canCancel ? btn(icons.stop(), `data-act="cancel" data-cid="${esc(c.id)}" title="取消"`, 'bxs bg ter') : ''
-        }</div></td></tr>`;
+        return hTr(
+          [
+            hStk(`<strong>${esc(c.name)}</strong>${hMut(esc(c.id), 't2xs mono')}`, 'sxs'),
+            commandSourceBadge(c.type, c.name),
+            [schedHtml, 'txs'],
+            statusBadge(c.status),
+            [c.next_run ? esc(formatRelativeZh(c.next_run)) : '—', 'txs mut'],
+            [esc(formatRelativeZh(c.created_at)), 'txs mut'],
+            [
+              `<div class="re gxs">${
+                canPause ? btn(icons.pause(), `data-act="pause" data-cid="${esc(c.id)}" title="暂停"`, 'bxs bg') : ''
+              }${canResume ? btn(icons.play(), `data-act="resume" data-cid="${esc(c.id)}" title="恢复"`, 'bxs bg tok') : ''}${
+                canCancel ? btn(icons.stop(), `data-act="cancel" data-cid="${esc(c.id)}" title="取消"`, 'bxs bg ter') : ''
+              }${btn(`${icons.eye()} 详情`, `data-inspect="${esc(c.id)}"`, 'bxs ba')}</div>`,
+              'tr',
+            ],
+          ],
+          cmdLabels,
+        );
       })
       .join('');
 
-    const typeOpts: Array<[string, string]> = [['', '全部类型'], ['immediate', '立即执行'], ['once', '定时一次'], ['cron', 'Cron 周期']];
+    const typeOpts: Array<[string, string]> = [['', '全部定时任务'], ['cron', 'Cron 周期'], ['once', '一次性预约']];
     const statusOpts: Array<[string, string]> = [['', '全部状态'], ['pending', '等待中'], ['running', '运行中'], ['completed', '已完成'], ['failed', '失败'], ['paused', '已暂停'], ['cancelled', '已取消']];
 
     ctx.root.innerHTML =
       pageHeadHtml(
         '定时任务',
-        '立即、一次性预约与 Cron 周期任务',
-        btn(`${icons.refresh()} 刷新`, 'id="cmd-refresh"') + btn(`${icons.plus()} 新建任务`, 'id="cmd-new"', 'bsm bp'),
+        'Cron 周期与一次性预约调度',
+        btn(`${icons.refresh()} 刷新`, 'id="cmd-refresh"') + btn(`${icons.plus()} 新建定时任务`, 'id="cmd-new"', 'bsm bp'),
       ) +
-      `<div class="card tb-c"><div class="toolbar"><div class="search-wrap">${icons.search()}<input id="c-search" class="input input-pill ism" type="search" placeholder="搜索任务…" value="${esc(search)}"></div>${selectHtml('c-type', typeOpts, typeFilter)}${selectHtml('c-status', statusOpts, statusFilter)}</div></div>` +
+      `<div class="card tb-c"><div class="toolbar"><div class="search-wrap">${icons.search()}${hInp('c-search', 'search', `placeholder="搜索定时任务…" value="${esc(search)}"`, 'input input-pill ism')}</div>${selectHtml('c-type', typeOpts, typeFilter)}${selectHtml('c-status', statusOpts, statusFilter)}</div></div>` +
       `<div class="card card-tbl mt-3">${tableHtml(
-        ['任务', '类型', '调度', '状态', '下次执行', '创建时间', '<span class="tr" style="display:block">操作</span>'],
+        ['任务', '类型', '调度', '状态', '下次执行', '创建时间', hThTr()],
         rowsHtml,
-        '暂无匹配任务。',
+        '暂无匹配的定时任务。',
+        'tbl-r',
       )}</div>`;
 
     on(ctx.root, '#cmd-refresh', () => void load());
@@ -114,14 +141,10 @@ export async function renderCommands(ctx: RouteContext): Promise<void> {
       paint();
     });
 
-    on(ctx.root, '#c-type', (el) => {
-      typeFilter = (el as HTMLSelectElement).value;
-      void load();
-    }, 'change');
-    on(ctx.root, '#c-status', (el) => {
-      statusFilter = (el as HTMLSelectElement).value;
-      void load();
-    }, 'change');
+    bindChange(ctx.root, [
+      ['#c-type', (v) => { typeFilter = v; void load(); }],
+      ['#c-status', (v) => { statusFilter = v; void load(); }],
+    ]);
 
     onAll(ctx.root, '[data-act]', async (el) => {
       const id = el.dataset.cid;
@@ -148,15 +171,15 @@ export async function renderCommands(ctx: RouteContext): Promise<void> {
     const pickedTargets = new Set<string>();
 
     formModal({
-      title: '新建任务',
+      title: '新建定时任务',
       formId: 'ct-form',
-      submitLabel: '创建',
+      submitLabel: '创建定时任务',
       wide: true,
       fieldsHtml:
-        `<div class="grid-2">${fieldHtml('ct-name', '任务名称', '<input id="ct-name" class="input" type="text" required maxlength="100" placeholder="夜间磁盘巡检">')}${fieldHtml('ct-type', '类型', '<select id="ct-type" class="input"><option value="cron" selected>Cron 周期</option><option value="once">定时一次</option><option value="immediate">立即执行</option></select>')}</div>` +
-        `<div id="ct-cron-box" class="card card-inset sxs"><div class="rb wrap gsm"><label class="label-sm" for="ct-schedule">Cron (5 段 UTC)</label><span class="bdg bd-m" id="ct-cron-preview">${esc(cronLabel('*/5 * * * *'))}</span></div><input id="ct-schedule" class="input mono" type="text" value="*/5 * * * *"><div class="row gxs wrap">${CRON_PRESETS.map(([l, e]) => `<button type="button" class="chip" data-cpre="${esc(e)}">${esc(l)}</button>`).join('')}</div></div>` +
-        `<div id="ct-once-box" class="hidden">${fieldHtml('ct-once-at', '执行时间 (ISO UTC)', '<input id="ct-once-at" class="input mono" type="text" placeholder="2026-12-01T03:00:00Z">')}</div>` +
-        `<div class="grid-2">${fieldHtml('ct-shell', 'Shell', shellSelectHtml('ct-shell', 'auto', 'input'))}${fieldHtml('ct-timeout', '超时(s)', '<input id="ct-timeout" class="input mono" type="number" min="5" max="7200" value="300">')}</div>` +
+        `<div class="grid-2">${fieldHtml('ct-name', '任务名称', hInp('ct-name', 'text', 'required maxlength="100" placeholder="夜间磁盘巡检"'))}${fieldHtml('ct-type', '调度类型', selectHtml('ct-type', [['cron', 'Cron 周期'], ['once', '一次性预约']], 'cron', 'input'))}</div>` +
+        `<div id="ct-cron-box" class="card card-inset sxs">${hRb(`<label class="label-sm" for="ct-schedule">Cron (5 段 · ${esc(state.systemInfo?.timezone || 'UTC')})</label><span class="bdg bd-m" id="ct-cron-preview">${esc(cronLabel('*/5 * * * *'))}</span>`)}${hInp('ct-schedule', 'text', 'value="*/5 * * * *"', 'input mono')}${hRw(CRON_PRESETS.map(([l, e]) => `<button type="button" class="chip" data-cpre="${esc(e)}">${esc(l)}</button>`).join(''))}</div>` +
+        `<div id="ct-once-box" class="hidden">${fieldHtml('ct-once-at', '执行时间 (ISO UTC)', hInp('ct-once-at', 'text', 'placeholder="2026-12-01T03:00:00Z"', 'input mono'))}</div>` +
+        `<div class="grid-2">${fieldHtml('ct-shell', 'Shell', shellSelectHtml('ct-shell', 'auto', 'input'))}${fieldHtml('ct-timeout', '超时(s)', hInp('ct-timeout', 'number', 'min="5" max="7200" value="300"', 'input mono'))}</div>` +
         fieldHtml('ct-content', '执行脚本', '<textarea id="ct-content" class="input mono t-ta" rows="4" required placeholder="uptime && df -h"></textarea>') +
         fieldHtml('ct-env', '环境变量 (KEY=VALUE)', '<textarea id="ct-env" class="input mono" rows="2" placeholder="LANG=C.UTF-8"></textarea>') +
         `<div class="field"><div class="rb mb-1"><label>目标范围</label>${tabsHtml([['devices', '按主机'], ['groups', '按分组']], targetType, 'data-ct-scope', true)}</div><div id="ct-targets" class="target-list max-h-180"></div></div>`,
@@ -264,22 +287,29 @@ export async function renderCommands(ctx: RouteContext): Promise<void> {
           const execs = res.executions?.length ? res.executions : detail.execution_history ?? [];
           const execHtml = !execs.length
             ? '<div class="mut txs">暂无执行记录。</div>'
-            : `<div class="ssm">${execs
-                .map((ex) => {
-                  const drHtml = ex.device_results?.length
-                    ? `<div class="sxs mt-1">${ex.device_results.map((dr) => hostCardHtml(dr)).join('')}</div>`
-                    : '';
-                  return `<div class="card card-inset sxs"><div class="rb wrap gxs"><div class="row gxs"><span class="mono txs">${esc(ex.id)}</span>${statusBadge(ex.status)}</div><span class="mut txs num">${esc(formatDate(ex.started_at))} · ${esc(formatElapsed(ex.started_at, ex.completed_at))}</span></div>${drHtml}</div>`;
-                })
-                .join('')}</div>`;
+            : hStk(
+                execs
+                  .map((ex) => {
+                    const drHtml = ex.device_results?.length
+                      ? hStk(ex.device_results.map((dr) => hostCardHtml(dr)).join(''), 'sxs mt-1')
+                      : '';
+                    return `<div class="card card-inset sxs">${hRb(`${hRow(`<span class="mono txs">${esc(ex.id)}</span>${statusBadge(ex.status)}`)}<span class="mut txs num">${esc(formatDate(ex.started_at))} · ${esc(formatElapsed(ex.started_at, ex.completed_at))}</span>`, 'wrap gxs')}${drHtml}</div>`;
+                  })
+                  .join(''),
+                'ssm',
+              );
 
           body.innerHTML =
-            `<div class="smd">${infoGridHtml([
-              ['任务名称', `<strong>${esc(detail.name)}</strong>`],
-              ['类型 / 状态', `<div class="row gxs">${esc(detail.type)} ${statusBadge(detail.status)}</div>`],
-              ['调度计划', `<span class="mono txs">${detail.type === 'cron' ? esc(cronLabel(detail.schedule)) : esc(detail.schedule || '—')}</span>`],
-              ['超时 / Shell', `<span class="mono txs">${esc(detail.timeout)}s · ${esc(detail.shell || 'auto')}</span>`],
-            ])}<div><div class="mut txs mb-1">命令脚本</div><pre class="code-pre"><code>${esc(detail.content)}</code></pre></div><div><div class="mut txs mb-1">执行历史 (${execs.length})</div>${execHtml}</div></div>`;
+            hStk(
+              infoGridHtml([
+                ['任务名称', `<strong>${esc(detail.name)}</strong>`],
+                ['类型 / 状态', hRow(`${commandSourceBadge(detail.type, detail.name)} ${statusBadge(detail.status)}`)],
+                ['调度计划', `<span class="mono txs">${detail.type === 'cron' ? esc(cronLabel(detail.schedule)) : esc(detail.schedule ? formatDate(detail.schedule) : '立即一次性')}</span>`],
+                ['超时 / Shell', `<span class="mono txs">${esc(detail.timeout)}s · ${esc(detail.shell || 'auto')}</span>`],
+              ]) +
+                `<div><div class="mut txs mb-1">命令脚本</div><pre class="code-pre"><code>${esc(detail.content)}</code></pre></div><div><div class="mut txs mb-1">执行历史 (${execs.length})</div>${execHtml}</div>`,
+              'smd',
+            );
           bindCopyButtons(body);
         } catch (err) {
           body.innerHTML = `<div class="alert alert-err">${esc(

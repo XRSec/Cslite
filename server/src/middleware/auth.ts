@@ -84,17 +84,23 @@ export function parseCookies(cookieHeader: string | undefined): Record<string, s
   return out;
 }
 
-export async function authenticateApiKey(
+export interface ApiKeyAuthResult {
+  user: AuthUser;
+  apiKeyId: string;
+  boundDeviceId: string | null;
+}
+
+export async function authenticateApiKeyWithScope(
   driver: SqlDriver,
   rawKey: string,
   nowIso: string = new Date().toISOString(),
-): Promise<AuthUser | null> {
+): Promise<ApiKeyAuthResult | null> {
   if (!rawKey) return null;
   const keyHash = await sha256Hex(rawKey);
   const row = await driver.get<
-    AuthUser & { api_key_id: string; last_used: string | null }
+    AuthUser & { api_key_id: string; last_used: string | null; bound_device_id: string | null }
   >(
-    'SELECT u.id, u.username, u.email, u.role, u.created_at, u.updated_at, ak.id AS api_key_id, ak.last_used FROM api_keys ak INNER JOIN users u ON u.id = ak.user_id WHERE ak.key_hash = ? LIMIT 1',
+    'SELECT u.id, u.username, u.email, u.role, u.created_at, u.updated_at, ak.id AS api_key_id, ak.last_used, ak.device_id AS bound_device_id FROM api_keys ak INNER JOIN users u ON u.id = ak.user_id WHERE ak.key_hash = ? LIMIT 1',
     [keyHash],
   );
   if (!row) return null;
@@ -109,13 +115,26 @@ export async function authenticateApiKey(
   }
 
   return {
-    id: Number(row.id),
-    username: row.username,
-    email: row.email,
-    role: (Number(row.role) === UserRole.ADMIN ? UserRole.ADMIN : UserRole.USER) as UserRole,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
+    user: {
+      id: Number(row.id),
+      username: row.username,
+      email: row.email,
+      role: (Number(row.role) === UserRole.ADMIN ? UserRole.ADMIN : UserRole.USER) as UserRole,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    },
+    apiKeyId: row.api_key_id,
+    boundDeviceId: row.bound_device_id ?? null,
   };
+}
+
+export async function authenticateApiKey(
+  driver: SqlDriver,
+  rawKey: string,
+  nowIso: string = new Date().toISOString(),
+): Promise<AuthUser | null> {
+  const res = await authenticateApiKeyWithScope(driver, rawKey, nowIso);
+  return res ? res.user : null;
 }
 
 function getRequestHostCandidates(c: Context): string[] {
@@ -185,11 +204,19 @@ export const requireAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
 
   if (apiKeyHeader || bearerToken.startsWith('ak_')) {
     const rawKey = apiKeyHeader || bearerToken;
-    const user = await authenticateApiKey(driver, rawKey, nowIso);
-    if (!user) {
+    const authRes = await authenticateApiKeyWithScope(driver, rawKey, nowIso);
+    if (!authRes) {
       return fail(c, ErrorCode.UNAUTHORIZED, 'Invalid API key', 401);
     }
-    c.set('user', user);
+    if (authRes.boundDeviceId) {
+      return fail(
+        c,
+        ErrorCode.FORBIDDEN,
+        'Device-scoped API key cannot access management APIs',
+        403,
+      );
+    }
+    c.set('user', authRes.user);
     c.set('authMethod', 'api_key');
     return next();
   }
