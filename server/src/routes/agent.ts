@@ -310,8 +310,22 @@ async function persistAgentTelemetry(
   } else if (metricsObj) {
     const prevHbMs = row.last_heartbeat ? Date.parse(row.last_heartbeat) : 0;
     const minGapMs = Math.max(30_000, Math.floor(config.heartbeatInterval * 0.75) * 1000);
+    const lastLoggedRow = await driver.get<{ max_ts: string | null }>(
+      "SELECT MAX(timestamp) AS max_ts FROM device_logs WHERE device_id = ? AND type IN ('heartbeat', 'health_online')",
+      [row.device_id],
+    );
+    const prevLoggedMs = lastLoggedRow?.max_ts ? Date.parse(lastLoggedRow.max_ts) : 0;
+    const effectivePrevMs =
+      Number.isFinite(prevLoggedMs) && prevLoggedMs > 0
+        ? Number.isFinite(prevHbMs) && prevHbMs > 0
+          ? Math.min(prevHbMs, prevLoggedMs)
+          : prevLoggedMs
+        : prevHbMs;
     const shouldLogHeartbeat =
-      !row.metrics_json || !Number.isFinite(prevHbMs) || prevHbMs <= 0 || nowMs - prevHbMs >= minGapMs;
+      !row.metrics_json ||
+      !Number.isFinite(effectivePrevMs) ||
+      effectivePrevMs <= 0 ||
+      nowMs - effectivePrevMs >= minGapMs;
     if (shouldLogHeartbeat) {
       await writeDeviceLog(
         driver,

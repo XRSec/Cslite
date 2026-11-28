@@ -229,12 +229,15 @@ export async function buildDeviceHealthHistory(
   }
 
   const sinceIso = new Date(internalBuckets[0]!.startMs).toISOString();
-  const minRow = await driver.get<{ min_ts: string | null }>(
-    `SELECT MIN(timestamp) AS min_ts FROM device_logs WHERE type IN ('heartbeat', 'health_online') AND ${devClause}`,
+  const minRows = await driver.all<{ device_id: string; min_ts: string | null }>(
+    `SELECT device_id, MIN(timestamp) AS min_ts FROM device_logs WHERE type IN ('heartbeat', 'health_online') AND ${devClause} GROUP BY device_id`,
     deviceIds,
   );
-  const parsedMinTs = minRow?.min_ts ? Date.parse(minRow.min_ts) : Number.NaN;
-  const earliestTelemetryMs = Number.isFinite(parsedMinTs) ? parsedMinTs : null;
+  const earliestTelemetryByDevice = new Map<string, number | null>();
+  for (const r of minRows) {
+    const parsed = r.min_ts ? Date.parse(r.min_ts) : Number.NaN;
+    earliestTelemetryByDevice.set(r.device_id, Number.isFinite(parsed) ? parsed : null);
+  }
 
   if (opts.range === '1h') {
     const firstStartMs = internalBuckets[0]!.startMs;
@@ -313,6 +316,7 @@ export async function buildDeviceHealthHistory(
 
     for (const d of devices) {
       const actual = devCounts.get(d.id)?.[i] ?? 0;
+      const earliestTelemetryMs = earliestTelemetryByDevice.get(d.id) ?? null;
       const createdMsRaw = d.created_at ? Date.parse(d.created_at) : Number.NaN;
       const createdMs = Number.isFinite(createdMsRaw) ? createdMsRaw : b.startMs;
       const trackingStartMs =

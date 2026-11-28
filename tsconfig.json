@@ -16,7 +16,8 @@
   },
   "include": [
     "shared/**/*.ts",
-    "server/**/*.ts"
+    "server/**/*.ts",
+    "mcp/**/*.ts"
   ],
   "exclude": [
     "node_modules",

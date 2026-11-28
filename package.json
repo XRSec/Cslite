@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "build:web": "node web/build.mjs",
+    "build:mcp": "esbuild mcp/src/index.ts --bundle --platform=node --format=esm --outfile=mcp/dist/cslite-mcp.mjs --banner:js='#!/usr/bin/env node'",
     "build:server": "npm run build:web && npm run typecheck",
     "build:scf": "npm run build:web && bash deploy/scf/build-scf.sh",
     "build": "npm run build:server",

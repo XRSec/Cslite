@@ -2,7 +2,7 @@
 # Zero external dependencies; implements /api/agent/* protocol with UTF-8 output and atomic state.
 
 $ErrorActionPreference = "Stop"
-$Version = "v1.2.1"
+$Version = "v1.2.2"
 
 try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls

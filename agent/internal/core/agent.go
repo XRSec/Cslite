@@ -80,7 +80,7 @@ func New(cfg *config.Config, opts ...Options) (*Agent, error) {
 
 	version := opt.Version
 	if version == "" {
-		version = "v1.2.1"
+		version = "v1.2.2"
 	}
 	maxWorkers := opt.MaxWorkers
 	if maxWorkers <= 0 {

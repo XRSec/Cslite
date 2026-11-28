@@ -385,7 +385,7 @@ make build-openwrt-ipk \
 在路由器上安装：
 
 ```sh
-opkg install /tmp/cslite-agent-lite_1.2.1_all.ipk
+opkg install /tmp/cslite-agent-lite_1.2.2_all.ipk
 cslite-agent-lite install --server "https://your-cslite-host" --key "ak_live_xxx"
 ```
 

@@ -50,7 +50,7 @@ CSLite 面向资源受限设备与无服务器（Serverless）场景打造：零
   - **在线终端与批量执行**：支持实时命令轮询、多标签历史回溯、平台快捷指令、多主机/多分组并发下发及逐行 **Output Diff** 对比。
   - **调度、日志与自动清理**：支持立即指令（`immediate`）、一次性预约（`once`）与时区感知 Cron 周期任务；日志中心支持整行点击预览、分页大小切换（`10 / 25 / 50 / 100`）、节流心跳健康记录以及可配置的日志保留期与手动清理。
 - **跨平台轻量探针（`agent/`）**
-  - **统一单点版本管理（`agent/VERSION`）**：通过 `web/build.mjs`、Go `//go:embed VERSION` 与发布流水线，自动保持 Go 二进制、OpenWrt POSIX Lite 脚本（`/agent-lite.sh`）、Windows PowerShell Lite 脚本（`/agent-lite.ps1`）及 `.ipk` 包版本一致（`v1.2.1`）。
+  - **统一单点版本管理（`agent/VERSION`）**：通过 `web/build.mjs`、Go `//go:embed VERSION` 与发布流水线，自动保持 Go 二进制、OpenWrt POSIX Lite 脚本（`/agent-lite.sh`）、Windows PowerShell Lite 脚本（`/agent-lite.ps1`）及 `.ipk` 包版本一致（`v1.2.2`）。
   - **原生服务守护**：支持 Linux `systemd`（系统级与 `--user`）、Alpine `OpenRC`、OpenWrt `procd` + UCI、macOS `launchd`、Windows Service SCM 以及 Android 启动挂钩。
   - **服务端托管安装与平滑自升级**：提供 `/i`、`/i.ps1`、`/ia`、`/u`、`/u.ps1`、`/agent-lite.sh`、`/agent-lite.ps1` 零库脚本路由；兼容 OpenWrt BusyBox（`curl -> uclient-fetch -> wget -> openssl s_client` 顺序回退）及无 `nohup` 下的 `HUP`/`TERM` 防断自升级重启。
 

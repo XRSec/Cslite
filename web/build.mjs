@@ -68,7 +68,7 @@ function readAgentVersion() {
     const fileVer = fs.readFileSync(path.join(rootDir, 'agent', 'VERSION'), 'utf8').trim();
     if (fileVer) return fileVer;
   } catch { /* ignore */ }
-  return 'v1.2.1';
+  return 'v1.2.2';
 }
 
 function assembleModularScripts(agentVersion) {

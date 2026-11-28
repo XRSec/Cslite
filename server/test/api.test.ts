@@ -3564,4 +3564,124 @@ describe('Cslite Unified API', () => {
     expect(h30.body.data.buckets).toHaveLength(30);
     expect(h30.body.data.buckets[0]?.status).toBe('empty');
   });
+
+  it('does not starve device_logs heartbeats when 60s agent heartbeats arrive under 300s server interval', async () => {
+    vi.useFakeTimers();
+    try {
+      const baseMs = Date.parse('2026-11-28T10:00:00.000Z');
+      vi.setSystemTime(baseMs);
+      const { app, driver } = await setupTestApp({ CSLITE_HEARTBEAT_INTERVAL: '300' });
+
+      const login = await reqJson(app, '/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'admin', password: 'admin' }),
+      });
+      const cookie = extractCookieValue(login.res.headers.get('set-cookie'));
+
+      const dev = await reqJson<{ id: string; api_key: string }>(app, '/api/devices', {
+        method: 'POST',
+        headers: { Cookie: `cslite_session=${cookie}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'go-node', platform: 'linux' }),
+      });
+      const reg = await reqJson<{ agent_id: string }>(app, '/api/agent/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          api_key: dev.body.data.api_key,
+          device_id: dev.body.data.id,
+          name: 'go-node',
+          platform: 'linux',
+          arch: 'amd64',
+          version: 'v1.2.1',
+        }),
+      });
+      const agentId = reg.body.data.agent_id;
+
+      // Send 60s heartbeats for 6 minutes (t=0, 1m, 2m, 3m, 4m, 5m)
+      // Under server heartbeatInterval=300s (minGap=225s), logs must be written at t=0 and t=4m (240s >= 225s)
+      for (let m = 0; m <= 5; m++) {
+        vi.setSystemTime(baseMs + m * 60_000);
+        const hb = await reqJson(app, '/api/agent/heartbeat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-API-Key': dev.body.data.api_key },
+          body: JSON.stringify({
+            agent_id: agentId,
+            metrics: { cpu_usage: 5 + m, memory_used: 100, memory_total: 1000 },
+          }),
+        });
+        expect(hb.res.status).toBe(200);
+      }
+
+      const logs = await driver.all<{ timestamp: string }>(
+        "SELECT timestamp FROM device_logs WHERE device_id = ? AND type = 'heartbeat' ORDER BY timestamp ASC",
+        [dev.body.data.id],
+      );
+      expect(logs).toHaveLength(2);
+      expect(logs[0]?.timestamp).toBe('2026-11-28T10:00:00.000Z');
+      expect(logs[1]?.timestamp).toBe('2026-11-28T10:04:00.000Z');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('computes earliestTelemetryMs per device in fleet health-history so older devices do not turn newer logs red', async () => {
+    const { app, driver } = await setupTestApp({ CSLITE_HEARTBEAT_INTERVAL: '300' });
+    const login = await reqJson(app, '/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'admin', password: 'admin' }),
+    });
+    const cookie = extractCookieValue(login.res.headers.get('set-cookie'));
+
+    const oldDev = await reqJson<{ id: string }>(app, '/api/devices', {
+      method: 'POST',
+      headers: { Cookie: `cslite_session=${cookie}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'old-lite', platform: 'openwrt' }),
+    });
+    const newLogDev = await reqJson<{ id: string }>(app, '/api/devices', {
+      method: 'POST',
+      headers: { Cookie: `cslite_session=${cookie}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'new-go', platform: 'linux' }),
+    });
+
+    const nowMs = Date.now();
+    const oldCreated = new Date(nowMs - 24 * 3600_000).toISOString();
+    const nowIso = new Date(nowMs - 10_000).toISOString();
+    await driver.run('UPDATE devices SET created_at = ?, last_seen = ? WHERE id IN (?, ?)', [
+      oldCreated,
+      nowIso,
+      oldDev.body.data.id,
+      newLogDev.body.data.id,
+    ]);
+
+    // old-lite has logs across the entire 1h window; new-go only has a log in the latest 5m bucket
+    for (let i = 0; i < 12; i++) {
+      await driver.run(
+        'INSERT INTO device_logs (id, device_id, type, timestamp, message, metadata_json) VALUES (?, ?, ?, ?, ?, NULL)',
+        [
+          `dlog_old_${i}`,
+          oldDev.body.data.id,
+          'heartbeat',
+          new Date(nowMs - (11 - i) * 300_000).toISOString(),
+          'ok',
+        ],
+      );
+    }
+    await driver.run(
+      'INSERT INTO device_logs (id, device_id, type, timestamp, message, metadata_json) VALUES (?, ?, ?, ?, ?, NULL)',
+      ['dlog_new_cur', newLogDev.body.data.id, 'heartbeat', nowIso, 'ok'],
+    );
+
+    const h1 = await reqJson<{
+      devices: Array<{ device_id: string; uptime_pct: number | null; slots: string[] }>;
+    }>(app, '/api/devices/health-history?range=1h', {
+      headers: { Cookie: `cslite_session=${cookie}` },
+    });
+    expect(h1.res.status).toBe(200);
+    const newSummary = h1.body.data.devices.find((d) => d.device_id === newLogDev.body.data.id);
+    expect(newSummary?.uptime_pct).toBe(100);
+    expect(newSummary?.slots.slice(0, 11).every((s) => s === 'empty')).toBe(true);
+    expect(newSummary?.slots[11]).toBe('ok');
+  });
 });
