@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version tag (defaults to v1.0.0)"
+        description: "Release version tag (defaults to agent/VERSION)"
         required: false
-        default: "v1.0.0"
+        default: ""
         type: string
 
 permissions:

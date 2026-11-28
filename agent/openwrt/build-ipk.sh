@@ -27,7 +27,7 @@ Options:
   --mode <lite|full> Explicitly select package mode
   --arch <arch>      OpenWrt architecture (e.g. all, x86_64, aarch64_generic, arm_cortex-a7_neon-vfpv4, mips_24kc, mipsel_24kc)
   --bin <path>       Pre-built cslite-agent Linux binary (full mode; auto-built via go if omitted)
-  --version <ver>    Package version (default: 1.0.0)
+  --version <ver>    Package version (default: from agent/VERSION)
   --out <path>       Output .ipk file path
 EOF
 }

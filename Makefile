@@ -8,7 +8,7 @@ TSC := ./node_modules/.bin/tsc
 TSX := ./node_modules/.bin/tsx
 VITEST := ./node_modules/.bin/vitest
 
-AGENT_VERSION ?= v1.0.0
+AGENT_VERSION ?= $(shell tr -d '[:space:]' < agent/VERSION 2>/dev/null || echo v1.2.0)
 IPK_VERSION := $(patsubst v%,%,$(AGENT_VERSION))
 OPENWRT_ARCH ?= x86_64
 AGENT_BIN ?=
