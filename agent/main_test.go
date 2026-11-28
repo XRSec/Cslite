@@ -2131,8 +2131,10 @@ install_openrc_service "/usr/local/bin/cslite-agent" "$4/etc/cslite-agent" "$5" 
 		}
 		libCheck := osexec.Command("sh", "-c", `
 			awk 'BEGIN{p=1} /^verify_upgrade_payload\(\)/{p=0} p{print}' "$1" > "$2"
-			. "$2" --
-			PATH="$3:$PATH" is_http_only_wget wget && got="$(PATH="$3:$PATH" probe_downloader)" && [ "$got" != "wget" ]
+			lib="$2"; bdir="$3"
+			set --
+			. "$lib"
+			PATH="$bdir:$PATH" is_http_only_wget wget && got="$(PATH="$bdir:$PATH" probe_downloader)" && [ "$got" != "wget" ]
 		`, "sh", upgScript, filepath.Join(tmpRoot, "upg-lib.sh"), binDir)
 		if out, err := libCheck.CombinedOutput(); err != nil {
 			t.Fatalf("upgrade.sh is_http_only_wget check failed: %v\n%s", err, string(out))
