@@ -34,7 +34,7 @@ func init() {
 	if strings.TrimSpace(Version) == "" {
 		Version = strings.TrimSpace(embeddedVersion)
 		if Version == "" {
-			Version = "v1.2.0"
+			Version = "v1.2.1"
 		}
 	}
 }

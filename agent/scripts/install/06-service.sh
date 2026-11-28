@@ -219,7 +219,7 @@ if [ "${CSLITE_SKIP_SERVICE_EXEC:-0}" = "1" ]; then
 fi
 
 if [ "$INSTALLED_MODE" = "full" ]; then
-	if [ "$OS" = "linux" ] && [ ! -d /run/systemd/system ] && ! command -v systemctl >/dev/null 2>&1; then
+	if [ "$OS" = "linux" ] && { [ ! -d /run/systemd/system ] || ! command -v systemctl >/dev/null 2>&1; }; then
 		set -- install --server "$SERVER" --key "$API_KEY"
 		[ -n "$DEVICE_NAME" ] && set -- "$@" --name "$DEVICE_NAME"
 		[ -n "$DEVICE_ID" ] && set -- "$@" --device-id "$DEVICE_ID"

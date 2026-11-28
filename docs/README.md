@@ -50,7 +50,7 @@ CSLite is built for resource-constrained nodes and serverless environments — z
   - **Online Terminal & Multi-Host Console**: Real-time command polling, multi-tab interactive command history, preset OS shortcuts, concurrent device/group targeting, and line-by-line **Output Diff**.
   - **Scheduling, Logs & System Retention**: `immediate`, `once`, and 5-field timezone-aware `cron` schedules; centralized Logs Center with click-to-preview rows, page size selector (`10 / 25 / 50 / 100`), throttled `heartbeat` telemetry logs, and configurable log retention + one-click cleanup.
 - **Cross-Platform Agents (`agent/`)**
-  - **Unified Single Version Source (`agent/VERSION`)**: Build and release workflows automatically keep the Go static binary (`//go:embed VERSION` + `-ldflags`), OpenWrt POSIX Lite script (`/agent-lite.sh`), PowerShell Lite script (`/agent-lite.ps1`), and `.ipk` package synchronized (`v1.2.0`).
+  - **Unified Single Version Source (`agent/VERSION`)**: Build and release workflows automatically keep the Go static binary (`//go:embed VERSION` + `-ldflags`), OpenWrt POSIX Lite script (`/agent-lite.sh`), PowerShell Lite script (`/agent-lite.ps1`), and `.ipk` package synchronized (`v1.2.1`).
   - **Service Integration**: Native management via `systemd` (`--user` or system), OpenWrt `procd` + UCI, OpenRC (Alpine), macOS `launchd`, Windows Service SCM, and Android Termux/root hooks.
   - **Server-Hosted Install & Self-Upgrade**: Zero-DB cached script routes (`/i`, `/i.ps1`, `/ia`, `/u`, `/u.ps1`, `/agent-lite.sh`, `/agent-lite.ps1`) with OpenWrt BusyBox fallback (`curl -> uclient-fetch -> wget -> openssl s_client`) and `HUP`/`TERM`-safe background self-upgrade.
 

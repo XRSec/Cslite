@@ -4,7 +4,7 @@
 # Usage: cslite-agent-lite <run|install|uninstall|start|stop|restart|status|version> [options]
 # Requires: POSIX sh, awk, and curl, wget, uclient-fetch, or openssl.
 
-VERSION="v1.2.0"
+VERSION="v1.2.1"
 
 is_termux() {
 	[ -n "${TERMUX_VERSION:-}" ] || [ -d /data/data/com.termux/files/usr ] || [ -d /data/data/com.termux ]

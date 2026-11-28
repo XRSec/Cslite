@@ -13,7 +13,7 @@ VERSION=""
 if [ -f "$AGENT_DIR/VERSION" ]; then
 	VERSION="$(tr -d '[:space:]' < "$AGENT_DIR/VERSION" 2>/dev/null || true)"
 fi
-[ -n "$VERSION" ] || VERSION="1.2.0"
+[ -n "$VERSION" ] || VERSION="1.2.1"
 BIN_PATH=""
 OUT_PATH=""
 

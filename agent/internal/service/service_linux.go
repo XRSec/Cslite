@@ -34,19 +34,24 @@ func isOpenRC() bool {
 	return err == nil
 }
 
+func isSystemdRunning() bool {
+	if info, err := os.Stat("/run/systemd/system"); err != nil || !info.IsDir() {
+		return false
+	}
+	_, err := osexec.LookPath("systemctl")
+	return err == nil
+}
+
 // DetectInitSystem returns "procd" on OpenWrt, "systemd", "openrc", or "unknown".
 func DetectInitSystem() string {
 	if config.IsOpenWrt() {
 		return "procd"
 	}
-	if _, err := os.Stat("/run/systemd/system"); err == nil {
+	if isSystemdRunning() {
 		return "systemd"
 	}
 	if isOpenRC() {
 		return "openrc"
-	}
-	if _, err := osexec.LookPath("systemctl"); err == nil {
-		return "systemd"
 	}
 	return "unknown"
 }
@@ -216,6 +221,9 @@ func systemdUnitPath(userMode bool) (string, error) {
 }
 
 func installSystemd(opts Options) error {
+	if !isSystemdRunning() {
+		return errors.New("systemd is not running (/run/systemd/system unavailable); run 'cslite-agent run' in foreground or use nohup instead")
+	}
 	userMode := opts.UserMode || os.Geteuid() != 0
 	unitPath, err := systemdUnitPath(userMode)
 	if err != nil {

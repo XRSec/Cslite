@@ -2140,6 +2140,71 @@ install_openrc_service "/usr/local/bin/cslite-agent" "$4/etc/cslite-agent" "$5" 
 			t.Fatalf("upgrade.sh is_http_only_wget check failed: %v\n%s", err, string(out))
 		}
 	})
+
+	t.Run("install.sh full mode uses nohup fallback in container with systemctl but no /run/systemd/system", func(t *testing.T) {
+		installBytes, err := os.ReadFile(filepath.Join("scripts", "install.sh"))
+		if err != nil {
+			t.Fatalf("read install.sh: %v", err)
+		}
+		if !strings.Contains(string(installBytes), `{ [ ! -d /run/systemd/system ] || ! command -v systemctl >/dev/null 2>&1; }`) {
+			t.Fatalf("install.sh missing container systemd OR-guard")
+		}
+		if _, err := os.Stat("/run/systemd/system"); err == nil {
+			return
+		}
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/fake-bin" {
+				// Non-#/< /{ header bytes so is_valid_binary accepts it as a full binary.
+				_, _ = w.Write([]byte("\x7fELF\x02\x01\x01\x00fake-cslite-agent-binary-payload"))
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer srv.Close()
+
+		tmpRoot := t.TempDir()
+		binDir := filepath.Join(tmpRoot, "stub-bin")
+		installDir := filepath.Join(tmpRoot, "install-bin")
+		cfgDir := filepath.Join(tmpRoot, "cfg")
+		homeDir := filepath.Join(tmpRoot, "home")
+		_ = os.MkdirAll(binDir, 0755)
+		_ = os.MkdirAll(homeDir, 0755)
+
+		unameStub := "#!/bin/sh\nif [ \"$1\" = \"-m\" ]; then echo x86_64; else echo Linux; fi\n"
+		if err := os.WriteFile(filepath.Join(binDir, "uname"), []byte(unameStub), 0755); err != nil {
+			t.Fatal(err)
+		}
+		systemctlStub := "#!/bin/sh\necho 'System has not been booted with systemd as init system (PID 1).' >&2\nexit 1\n"
+		if err := os.WriteFile(filepath.Join(binDir, "systemctl"), []byte(systemctlStub), 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		cmd := osexec.Command("sh", "-s", "--",
+			"--server", srv.URL,
+			"--key", "ak_test_container",
+			"--device-id", "dev_container",
+			"--bin-url", srv.URL+"/fake-bin",
+		)
+		cmd.Stdin = bytes.NewReader(installBytes)
+		cmd.Env = []string{
+			"PATH=" + binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+			"HOME=" + homeDir,
+			"TMPDIR=" + tmpRoot,
+			"CSLITE_INSTALL_DIR=" + installDir,
+			"CSLITE_CONFIG_DIR=" + cfgDir,
+		}
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("install.sh container fallback failed: %v\n%s", err, string(out))
+		}
+		if !strings.Contains(string(out), "Started cslite-agent in background") {
+			t.Fatalf("expected nohup background start message, got:\n%s", string(out))
+		}
+		if _, err := os.Stat(filepath.Join(cfgDir, "config.json")); err != nil {
+			t.Fatalf("expected config.json to be written: %v", err)
+		}
+	})
 }
 
 func TestVersionConsistency(t *testing.T) {
